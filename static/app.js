@@ -383,7 +383,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
         else { const o = hit(ctx, objs, p); sel = o ? o.id : null; drag = o ? { mode: 'move', last: p, moved: false, o } : null; }
       }
       else if (cur === 'camera') { const o = { id: uid(), type: 'camera', x: p.x, y: p.y, s: 120, a: 0 }; objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
-      else if (cur.startsWith('sticker:')) { const o = { id: uid(), type: 'sticker', sticker: cur.slice(8), x: p.x - 130, y: p.y - 45, w: 260, h: 90, a: 0 }; objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
+      else if (cur.startsWith('sticker:')) { const o = { id: uid(), type: 'sticker', sticker: cur.slice(8), x: p.x - 30, y: p.y - 45, w: 60, h: 90, a: 0 }; objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
       else if (cur === 'text') { const t = prompt('Label text'); if (t && t.trim()) { const o = { id: uid(), type: 'text', x: p.x, y: p.y, text: t.trim() }; objs.push(o); sel = o.id; commit(); } cur = 'select'; }
       else { const o = cur === 'arrow' ? { id: uid(), type: 'arrow', x1: p.x, y1: p.y, x2: p.x, y2: p.y } : { id: uid(), type: cur, x: p.x, y: p.y, w: 0, h: 0 };
         objs.push(o); sel = null; drag = { mode: 'draw', o, s: p }; }
