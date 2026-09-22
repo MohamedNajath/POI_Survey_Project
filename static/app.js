@@ -264,14 +264,29 @@ async function editPhoto(p, title, hint, assign) {
 
 /* ============ annotation editor ============ */
 const CW = 1600, CH = 1200;
-function paintScene(ctx, img, fit, objs, selId) {
+const STICKERS = {
+  wall_mount: { label: 'Wall Mount', file: 'Wall Mount.png' },
+  thin_pole: { label: 'Thin Pole', file: 'Thin Pole.png' },
+  thick_pole: { label: 'Thick Pole', file: 'Thick Pole.png' },
+  target_area: { label: 'Target Area', file: 'Target Area.png' },
+  rhs_wall_mount: { label: 'RHS Wall Mount', file: 'RHS Wall Mount.png' },
+  pm: { label: 'PM', file: 'PM.png' },
+  pendant: { label: 'Pendant', file: 'Pendant.png' },
+  outline: { label: 'Outline', file: 'Outline.png' },
+  lhs_wall_mount: { label: 'LHS Wall Mount', file: 'LHS Wall Mount.png' },
+  hanging_camera: { label: 'Hanging Camera', file: 'Hanging Camera.png' },
+  ceiling_mount: { label: 'Ceiling Mount', file: 'Ceiling Mount.png' }
+};
+function paintScene(ctx, img, fit, objs, selId, stickerImages) {
   ctx.clearRect(0, 0, CW, CH); ctx.fillStyle = fit === 'contain' ? '#1a1a1a' : '#000'; ctx.fillRect(0, 0, CW, CH);
   if (img && img.width) { const k = (fit === 'contain' ? Math.min : Math.max)(CW / img.width, CH / img.height), w = img.width * k, h = img.height * k;
     ctx.drawImage(img, (CW - w) / 2, (CH - h) / 2, w, h); }
-  objs.forEach(o => drawObj(ctx, o)); const so = objs.find(o => o.id === selId);
-  if (so) { const b = bbox(ctx, so); ctx.save(); ctx.setLineDash([14, 10]); ctx.lineWidth = 4; ctx.strokeStyle = '#1a73e8'; ctx.strokeRect(b.x - 8, b.y - 8, b.w + 16, b.h + 16); ctx.restore(); }
+  objs.forEach(o => drawObj(ctx, o, stickerImages)); const so = objs.find(o => o.id === selId);
+  if (so) { const b = bbox(ctx, so); ctx.save(); ctx.setLineDash([14, 10]); ctx.lineWidth = 4; ctx.strokeStyle = '#1a73e8'; ctx.strokeRect(b.x - 8, b.y - 8, b.w + 16, b.h + 16);
+    if (so.type === 'sticker') { ctx.setLineDash([]); ctx.fillStyle = '#1a73e8'; [[b.x, b.y], [b.x + b.w, b.y + b.h]].forEach(([x, y]) => ctx.fillRect(x - 14, y - 14, 28, 28)); }
+    ctx.restore(); }
 }
-function drawObj(ctx, o) {
+function drawObj(ctx, o, stickerImages = {}) {
   ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   if (o.type === 'target') {
     ctx.fillStyle = 'rgba(255,230,0,.28)'; ctx.fillRect(o.x, o.y, o.w, o.h); ctx.strokeStyle = 'rgba(225,60,90,.9)'; ctx.lineWidth = 8; ctx.strokeRect(o.x, o.y, o.w, o.h);
@@ -293,6 +308,17 @@ function drawObj(ctx, o) {
   } else if (o.type === 'text') {
     ctx.font = 'bold 44px Calibri, Arial, sans-serif'; ctx.textBaseline = 'top'; const w = ctx.measureText(o.text).width;
     ctx.fillStyle = '#ffff00'; ctx.fillRect(o.x - 10, o.y - 6, w + 20, 62); ctx.fillStyle = '#d00000'; ctx.fillText(o.text, o.x, o.y);
+  } else if (o.type === 'sticker') {
+    const sticker = STICKERS[o.sticker] || STICKERS.target_area;
+    ctx.translate(o.x + o.w / 2, o.y + o.h / 2); ctx.rotate((o.a || 0) * Math.PI / 180);
+    const image = stickerImages[o.sticker];
+    if (image && image.complete && image.naturalWidth) ctx.drawImage(image, -o.w / 2, -o.h / 2, o.w, o.h);
+    else {
+      ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#d00000'; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.roundRect(-o.w / 2, -o.h / 2, o.w, o.h, 18); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#d00000'; ctx.font = 'bold 34px Calibri, Arial, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(sticker.label, 0, 2);
+    }
   }
   ctx.restore();
 }
@@ -300,6 +326,7 @@ function bbox(ctx, o) {
   if (o.type === 'arrow') return { x: Math.min(o.x1, o.x2), y: Math.min(o.y1, o.y2), w: Math.abs(o.x2 - o.x1), h: Math.abs(o.y2 - o.y1) };
   if (o.type === 'camera') { const r = o.s * .75; return { x: o.x - r, y: o.y - r, w: r * 2, h: r * 2 }; }
   if (o.type === 'text') { ctx.save(); ctx.font = 'bold 44px Calibri, Arial, sans-serif'; const w = ctx.measureText(o.text).width; ctx.restore(); return { x: o.x - 10, y: o.y - 6, w: w + 20, h: 62 }; }
+  if (o.type === 'sticker') return { x: o.x, y: o.y, w: o.w, h: o.h };
   return { x: o.x, y: o.y, w: o.w, h: o.h };
 }
 function distSeg(p, a, b) { const dx = b.x - a.x, dy = b.y - a.y, l = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l)); return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy); }
@@ -310,6 +337,10 @@ function hit(ctx, objs, p) {
     if (p.x >= b.x - pad && p.x <= b.x + b.w + pad && p.y >= b.y - pad && p.y <= b.y + b.h + pad) return o; }
   return null;
 }
+function stickerHandle(ctx, o, p) {
+  if (!o || o.type !== 'sticker') return false;
+  const b = bbox(ctx, o); return Math.hypot(p.x - (b.x + b.w), p.y - (b.y + b.h)) <= 34;
+}
 function moveObj(o, dx, dy) { if (o.type === 'arrow') { o.x1 += dx; o.y1 += dy; o.x2 += dx; o.y2 += dy; } else { o.x += dx; o.y += dy; } }
 
 function openEditor({ title, hint, src, ann, tool = 'select' }) {
@@ -319,40 +350,78 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       <div class="hint">${esc(hint)}</div><div class="stage"><canvas width="${CW}" height="${CH}"></canvas></div>
       <div class="bar">
         ${[['select', 'Move'], ['target', 'Target'], ['camera', 'Camera'], ['arrow', 'Arrow'], ['box', 'Box'], ['circle', 'Circle'], ['text', 'Text']].map(([k, l]) => `<button data-tool="${k}">${l}</button>`).join('')}
-        <div class="sep"></div><button id="ed-rot">Rotate</button><button id="ed-del">Delete</button><button id="ed-undo">Undo</button><button id="ed-redo">Redo</button>
+        <div class="sep"></div><span class="tool-label">Stickers</span>
+        ${Object.entries(STICKERS).map(([k, s]) => `<button data-tool="sticker:${k}">${s.label}</button>`).join('')}
+        <div class="sep"></div><button id="ed-rot">Rotate</button><button id="ed-width-minus">W -</button><button id="ed-width-plus">W +</button><button id="ed-height-minus">H -</button><button id="ed-height-plus">H +</button><button id="ed-del">Delete</button><button id="ed-undo">Undo</button><button id="ed-redo">Redo</button>
         <div class="sep"></div><button id="ed-fit"></button></div>`;
     document.body.appendChild(ov); document.body.style.overflow = 'hidden';
     const cv = $('canvas', ov), ctx = cv.getContext('2d'); const img = new Image();
+    const stickerImages = {};
     let objs = clone(ann?.objs || []), fit = ann?.fit || 'cover', sel = null, cur = tool, drag = null, hist = [JSON.stringify(objs)], hi = 0;
-    const redraw = () => { paintScene(ctx, img, fit, objs, sel);
+    const pointers = new Map(); let pinch = null;
+    const redraw = () => { paintScene(ctx, img, fit, objs, sel, stickerImages);
       ov.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === cur));
       $('#ed-undo', ov).disabled = hi === 0; $('#ed-redo', ov).disabled = hi === hist.length - 1;
-      const so = objs.find(o => o.id === sel); $('#ed-rot', ov).disabled = !(so && so.type === 'camera'); $('#ed-del', ov).disabled = !so;
+      const so = objs.find(o => o.id === sel); $('#ed-rot', ov).disabled = !(so && (so.type === 'camera' || so.type === 'sticker'));
+      ['#ed-width-minus', '#ed-width-plus', '#ed-height-minus', '#ed-height-plus'].forEach(id => $(id, ov).disabled = !(so && so.type === 'sticker'));
+      $('#ed-del', ov).disabled = !so;
       $('#ed-fit', ov).textContent = fit === 'cover' ? 'Fill frame' : 'Whole photo'; };
+    Object.entries(STICKERS).forEach(([key, sticker]) => {
+      const image = new Image(); image.onload = redraw; image.src = `stickers/${encodeURIComponent(sticker.file)}`; stickerImages[key] = image;
+    });
     const commit = () => { hist = hist.slice(0, hi + 1); hist.push(JSON.stringify(objs)); hi = hist.length - 1; };
     const pt = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * CW / r.width, y: (e.clientY - r.top) * CH / r.height }; };
     img.onload = redraw; img.src = src;
     cv.addEventListener('pointerdown', e => {
-      cv.setPointerCapture(e.pointerId); const p = pt(e);
-      if (cur === 'select') { const o = hit(ctx, objs, p); sel = o ? o.id : null; drag = o ? { mode: 'move', last: p, moved: false, o } : null; }
+      cv.setPointerCapture(e.pointerId); pointers.set(e.pointerId, pt(e));
+      if (pointers.size === 2 && sel) {
+        const values = [...pointers.values()]; pinch = { start: Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y), w: objs.find(o => o.id === sel)?.w, h: objs.find(o => o.id === sel)?.h };
+        drag = null; return;
+      }
+      const p = pt(e);
+      if (cur === 'select') {
+        const selected = objs.find(o => o.id === sel);
+        if (stickerHandle(ctx, selected, p)) drag = { mode: 'resize', o: selected };
+        else { const o = hit(ctx, objs, p); sel = o ? o.id : null; drag = o ? { mode: 'move', last: p, moved: false, o } : null; }
+      }
       else if (cur === 'camera') { const o = { id: uid(), type: 'camera', x: p.x, y: p.y, s: 120, a: 0 }; objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
+      else if (cur.startsWith('sticker:')) { const o = { id: uid(), type: 'sticker', sticker: cur.slice(8), x: p.x - 130, y: p.y - 45, w: 260, h: 90, a: 0 }; objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
       else if (cur === 'text') { const t = prompt('Label text'); if (t && t.trim()) { const o = { id: uid(), type: 'text', x: p.x, y: p.y, text: t.trim() }; objs.push(o); sel = o.id; commit(); } cur = 'select'; }
       else { const o = cur === 'arrow' ? { id: uid(), type: 'arrow', x1: p.x, y1: p.y, x2: p.x, y2: p.y } : { id: uid(), type: cur, x: p.x, y: p.y, w: 0, h: 0 };
         objs.push(o); sel = null; drag = { mode: 'draw', o, s: p }; }
       redraw(); });
     cv.addEventListener('pointermove', e => {
+      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, pt(e));
+      if (pinch && sel && pointers.size >= 2) {
+        const values = [...pointers.values()]; const distance = Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y);
+        const o = objs.find(x => x.id === sel); if (o?.type === 'sticker' && pinch.start) { const scale = Math.max(.25, Math.min(4, distance / pinch.start));
+          const nw = Math.max(40, pinch.w * scale), nh = Math.max(30, pinch.h * scale); o.x += (o.w - nw) / 2; o.y += (o.h - nh) / 2; o.w = nw; o.h = nh; redraw(); }
+        return;
+      }
       if (!drag) return; const p = pt(e);
+      if (drag.mode === 'resize') { const o = drag.o; const nw = Math.max(40, p.x - o.x), nh = Math.max(30, p.y - o.y); o.w = nw; o.h = nh; redraw(); return; }
       if (drag.mode === 'move') { moveObj(drag.o, p.x - drag.last.x, p.y - drag.last.y); drag.last = p; drag.moved = true; }
       else { const o = drag.o; if (o.type === 'arrow') { o.x2 = p.x; o.y2 = p.y; } else { o.x = Math.min(drag.s.x, p.x); o.y = Math.min(drag.s.y, p.y); o.w = Math.abs(p.x - drag.s.x); o.h = Math.abs(p.y - drag.s.y); } }
       redraw(); });
     const end = () => { if (!drag) return;
       if (drag.mode === 'move') { if (drag.moved) commit(); }
+      else if (drag.mode === 'resize') commit();
       else { const o = drag.o, tiny = o.type === 'arrow' ? Math.hypot(o.x2 - o.x1, o.y2 - o.y1) < 30 : (o.w < 30 || o.h < 30);
         if (tiny) objs.pop(); else { sel = o.id; commit(); } cur = 'select'; }
       drag = null; redraw(); };
-    cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+    cv.addEventListener('pointerup', e => { pointers.delete(e.pointerId); if (pointers.size < 2 && pinch) { commit(); pinch = null; } end(); });
+    cv.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinch = null; end(); });
     ov.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => { cur = b.dataset.tool; redraw(); });
     $('#ed-rot', ov).onclick = () => { const o = objs.find(x => x.id === sel); if (o) { o.a = ((o.a || 0) + 30) % 360; commit(); redraw(); } };
+    const resizeSticker = (dw, dh) => {
+      const o = objs.find(x => x.id === sel); if (!o || o.type !== 'sticker') return;
+      const nw = Math.max(40, o.w + dw), nh = Math.max(30, o.h + dh);
+      o.x -= (nw - o.w) / 2; o.y -= (nh - o.h) / 2; o.w = nw; o.h = nh; commit(); redraw();
+    };
+    $('#ed-width-minus', ov).onclick = () => resizeSticker(-20, 0);
+    $('#ed-width-plus', ov).onclick = () => resizeSticker(20, 0);
+    $('#ed-height-minus', ov).onclick = () => resizeSticker(0, -20);
+    $('#ed-height-plus', ov).onclick = () => resizeSticker(0, 20);
     $('#ed-del', ov).onclick = () => { objs = objs.filter(o => o.id !== sel); sel = null; commit(); redraw(); };
     $('#ed-undo', ov).onclick = () => { if (hi > 0) { objs = JSON.parse(hist[--hi]); sel = null; redraw(); } };
     $('#ed-redo', ov).onclick = () => { if (hi < hist.length - 1) { objs = JSON.parse(hist[++hi]); sel = null; redraw(); } };
@@ -360,7 +429,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     const close = v => { ov.remove(); document.body.style.overflow = ''; resolve(v); };
     $('#ed-cancel', ov).onclick = () => close(null);
     $('#ed-done', ov).onclick = () => { const c = document.createElement('canvas'); c.width = CW; c.height = CH;
-      paintScene(c.getContext('2d'), img, fit, objs, null); close({ ann: { fit, objs }, flat: c.toDataURL('image/jpeg', 0.92) }); };
+      paintScene(c.getContext('2d'), img, fit, objs, null, stickerImages); close({ ann: { fit, objs }, flat: c.toDataURL('image/jpeg', 0.92) }); };
   });
 }
 
