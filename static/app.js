@@ -230,11 +230,12 @@ async function preview() {
 
 /* ============ photo handling ============ */
 function fileToDataURL(file, max = 2000) {
-  return new Promise((res, rej) => { const u = URL.createObjectURL(file), im = new Image();
+  return new Promise((res, rej) => { const reader = new FileReader(), im = new Image();
     im.onload = () => { const k = Math.min(1, max / Math.max(im.width, im.height)), c = document.createElement('canvas');
       c.width = Math.round(im.width * k); c.height = Math.round(im.height * k); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
-      URL.revokeObjectURL(u); res(c.toDataURL('image/jpeg', 0.9)); };
-    im.onerror = () => { URL.revokeObjectURL(u); rej(new Error('Could not read that image')); }; im.src = u; });
+      res(c.toDataURL('image/jpeg', 0.86)); };
+    im.onerror = () => rej(new Error('Could not read that image')); reader.onerror = () => rej(new Error('Could not read that photo file'));
+    reader.onload = () => { im.src = reader.result; }; reader.readAsDataURL(file); });
 }
 async function addPhoto(target, file) {
   const orig = await fileToDataURL(file); const isFloor = target === 'floor';
@@ -248,7 +249,7 @@ async function addPhoto(target, file) {
   scheduleSave(); render();
 }
 async function editPhoto(p, title, hint, assign) {
-  const r = await openEditor({ title, hint, src: p.orig, ann: p.ann, tool: 'select' });
+  const r = await openEditor({ title, hint: `${hint} Pinch with two fingers to zoom the selected sticker.`, src: p.orig, ann: p.ann, tool: 'select' });
   if (r) { assign({ orig: p.orig, ann: r.ann, flat: r.flat }); scheduleSave(); render(); }
 }
 
@@ -358,14 +359,22 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     Object.entries(STICKERS).forEach(([key, sticker]) => {
       const image = new Image(); image.onload = redraw; image.src = `stickers/${encodeURIComponent(sticker.file)}`; stickerImages[key] = image;
     });
+    const stickersReady = () => Promise.all(Object.values(stickerImages).map(image => image.complete ? Promise.resolve() : new Promise(resolve => {
+      image.onload = resolve; image.onerror = resolve;
+    })));
     const commit = () => { hist = hist.slice(0, hi + 1); hist.push(JSON.stringify(objs)); hi = hist.length - 1; };
+    const photoReady = new Promise(resolve => { img.onload = () => { redraw(); resolve(); }; img.onerror = resolve; });
     const pt = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * CW / r.width, y: (e.clientY - r.top) * CH / r.height }; };
-    img.onload = redraw; img.src = src;
+    img.src = src;
     cv.addEventListener('pointerdown', e => {
       cv.setPointerCapture(e.pointerId); pointers.set(e.pointerId, pt(e));
       if (pointers.size === 2 && sel) {
-        const values = [...pointers.values()]; pinch = { start: Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y), w: objs.find(o => o.id === sel)?.w, h: objs.find(o => o.id === sel)?.h };
-        drag = null; return;
+        const sticker = objs.find(o => o.id === sel);
+        if (sticker?.type === 'sticker') {
+          const values = [...pointers.values()];
+          pinch = { start: Math.max(1, Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y)), w: sticker.w, h: sticker.h, x: sticker.x, y: sticker.y };
+          drag = null; e.preventDefault(); return;
+        }
       }
       const p = pt(e);
       if (cur === 'select') {
@@ -384,7 +393,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       if (pinch && sel && pointers.size >= 2) {
         const values = [...pointers.values()]; const distance = Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y);
         const o = objs.find(x => x.id === sel); if (o?.type === 'sticker' && pinch.start) { const scale = Math.max(.25, Math.min(4, distance / pinch.start));
-          const nw = Math.max(40, pinch.w * scale), nh = Math.max(30, pinch.h * scale); o.x += (o.w - nw) / 2; o.y += (o.h - nh) / 2; o.w = nw; o.h = nh; redraw(); }
+          const nw = Math.max(40, pinch.w * scale), nh = Math.max(30, pinch.h * scale); o.x = pinch.x - (nw - pinch.w) / 2; o.y = pinch.y - (nh - pinch.h) / 2; o.w = nw; o.h = nh; redraw(); e.preventDefault(); }
         return;
       }
       if (!drag) return; const p = pt(e);
@@ -417,7 +426,8 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     $('#ed-fit', ov).onclick = () => { fit = fit === 'cover' ? 'contain' : 'cover'; redraw(); };
     const close = v => { ov.remove(); document.body.style.overflow = ''; resolve(v); };
     $('#ed-cancel', ov).onclick = () => close(null);
-    $('#ed-done', ov).onclick = () => { const c = document.createElement('canvas'); c.width = CW; c.height = CH;
+    $('#ed-done', ov).onclick = async () => { const done = $('#ed-done', ov); done.disabled = true; await Promise.all([photoReady, stickersReady()]);
+      const c = document.createElement('canvas'); c.width = CW; c.height = CH;
       paintScene(c.getContext('2d'), img, fit, objs, null, stickerImages); close({ ann: { fit, objs }, flat: c.toDataURL('image/jpeg', 0.92) }); };
   });
 }
