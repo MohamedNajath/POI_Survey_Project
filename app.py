@@ -44,10 +44,13 @@ def build(survey, tmp, ref):
                      'target_area_m': str(c.get('target_area_m', '')).strip(), 'viewing_angle': angle,
                      'camera_model': c.get('camera_model', ''), 'install_type': c.get('install_type', ''), 'environment': c.get('environment', ''),
                      'qty': qty, 'photo_target': paths.get('target', ''), 'photo_camera': paths.get('camera', '')})
-    cfg = survey.get('config', {})
-    try: cfg = {'encoding': cfg['encoding'], 'resolution': cfg['resolution'], 'fps': int(cfg['fps']),
-                'bitrate_kbps': int(cfg['bitrate_kbps']), 'wdr_day': cfg['wdr_day'], 'wdr_night': cfg['wdr_night']}
-    except (KeyError, ValueError, TypeError): errors.append('Setup: camera settings are incomplete (fps and bitrate must be numbers).')
+    cfg_in = survey.get('config', {})
+    try:
+        cfg = {'encoding': cfg_in['encoding'], 'resolution': cfg_in['resolution'], 'fps': int(cfg_in['fps']),
+               'bitrate_kbps': int(cfg_in['bitrate_kbps']), 'wdr_day': cfg_in['wdr_day'], 'wdr_night': cfg_in['wdr_night']}
+        events_per_day = int(cfg_in.get('events_per_day', 1000))
+        if events_per_day <= 0: raise ValueError()
+    except (KeyError, ValueError, TypeError): errors.append('Setup: camera settings are incomplete (fps, bitrate, and events per day must be valid positive numbers).')
     if errors: return None, errors
     fp = survey.get('floor_plan'); fpp = None
     if fp and fp.get('flat'): fpp = os.path.join(tmp, 'floorplan.jpg'); data_url_to_file(fp['flat'], fpp)
@@ -57,7 +60,8 @@ def build(survey, tmp, ref):
         'facility': {'name': fac['name'], 'location': fac['location'], 'category': fac.get('category', ''), 'type': fac.get('type', 'as_build')},
         'client': {k: g('client', k) for k in ('name', 'mobile', 'designation', 'email')},
         'contractor': {k: g('contractor', k) for k in ('company', 'name', 'mobile', 'designation', 'email', 'certified_engineer', 'certified_technician')},
-        'config': cfg, 'vendor': survey.get('vendor', 'DAHUA'), 'cameras': cams, 'author': survey.get('author', ''),
+        'config': cfg, 'storage_constants': {'events_per_day': events_per_day},
+        'vendor': survey.get('vendor', 'DAHUA'), 'cameras': cams, 'author': survey.get('author', ''),
         'nvr': [{'device_type': d.get('device_type', ''), 'model': d.get('model', ''), 'description': d.get('description', ''), 'qty': d.get('qty', 1)}
                 for d in survey.get('nvr', [])],
         'verification': {'items': ['pending'] * 6, 'stamp_image': None}, 'floor_plan': fpp,

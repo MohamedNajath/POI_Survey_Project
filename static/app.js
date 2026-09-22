@@ -23,7 +23,7 @@ const idb = {
 
 /* ============ state ============ */
 let CAT = {}, CAPS = {}, S = null, view = 'home', step = 0, saveTimer = null;
-const STEPS = ['Site', 'Cameras', 'Photos', 'Setup', 'Review'];
+const STEPS = ['Site', 'Cameras', 'Setup', 'Review'];
 
 const newCamera = () => ({ id: uid(), location_name: '', distance_m: '', target_area_m: '', viewing_angle: CAT.default_angle ?? (CAT.angles || [6])[0],
   camera_model: (CAT.camera_models || [])[0] || '', install_type: (CAT.install_types || ['Wall Mount'])[0], environment: (CAT.environments || ['Indoor'])[0], qty: 1, remarks: '',
@@ -35,7 +35,7 @@ const newSurvey = () => ({ id: uid(), created: Date.now(), updated: Date.now(), 
   facility: { name: '', location: '', category: (CAT.categories || ['Other'])[0], type: 'as_build' },
   client: { name: '', mobile: '', designation: '', email: '' },
   contractor: { company: '', name: '', mobile: '', designation: '', email: '', certified_engineer: '', certified_technician: '' },
-  config: { encoding: 'H.264', resolution: '2560x1440p', fps: 25, bitrate_kbps: 4096, wdr_day: 'ON', wdr_night: 'OFF' },
+  config: { encoding: 'H.264', resolution: '2560x1440p', fps: 25, bitrate_kbps: 4096, wdr_day: 'ON', wdr_night: 'OFF', events_per_day: 1000 },
   vendor: 'DAHUA', author: '', cameras: [newCamera()], nvr: clone(CAT.nvr_defaults || []), floor_plan: null });
 
 function scheduleSave() {
@@ -47,8 +47,8 @@ function scheduleSave() {
 const totalCams = () => S.cameras.reduce((n, c) => n + Math.max(1, parseInt(c.qty) || 1), 0);
 
 function storageEstimate() {
-  const n = totalCams(), s = (parseInt(S.config.bitrate_kbps) || 4096) / 4096;
-  const day = 21.2 * s * 1000 / 1024, ev = day * 90 * n / 1024, img = (1000 / 1024) * 90 * n, total = ev + img / 1024;
+  const n = totalCams(), events = Math.max(1, parseInt(S.config.events_per_day) || 1000), s = (parseInt(S.config.bitrate_kbps) || 4096) / 4096;
+  const day = 21.2 * s * events / 1024, ev = day * 90 * n / 1024, img = (events / 1024) * 90 * n, total = ev + img / 1024;
   return { total: total.toFixed(2), extra: (total * 1.1).toFixed(2) };
 }
 
@@ -67,8 +67,6 @@ function issues() {
   });
   return out;
 }
-const photoCounts = () => { let d = 0; S.cameras.forEach(c => { d += !!c.photos.target + !!c.photos.camera; }); return [d, S.cameras.length * 2]; };
-
 /* ============ rendering ============ */
 const fld = (label, path, o = {}) => `<label class="f ${o.wide ? 'wide' : ''}"><span>${label}</span>
   ${o.area ? `<textarea data-bind="${path}" ${o.ph ? `placeholder="${o.ph}"` : ''}>${esc(get(S, path))}</textarea>`
@@ -94,9 +92,9 @@ async function renderHome() {
 }
 
 function renderSurvey() {
-  const [pd, pt] = photoCounts(), iss = issues();
-  const done = i => (i === 0 ? !iss.some(x => x.s === 0) : i === 1 ? !iss.some(x => x.s === 1) : i === 2 ? pd === pt && pt > 0 : i === 3 ? true : false);
-  const body = [siteStep, camerasStep, photosStep, setupStep, reviewStep][step]();
+  const iss = issues();
+  const done = i => i === 0 ? !iss.some(x => x.s === 0) : i === 1 ? !iss.some(x => x.s === 1) : true;
+  const body = [siteStep, camerasStep, setupStep, reviewStep][step]();
   $('#app').innerHTML = `<div class="top"><button data-act="home" aria-label="Back to drafts">‹</button>
     <h1>${esc(S.facility.name || 'New survey')}</h1><span class="saved" id="saved">Saved</span></div>
     <main>${body}</main>
@@ -145,9 +143,12 @@ function camerasStep() {
     ${sel('Camera model', `cameras.${i}.camera_model`, CAT.camera_models || [])}${sel('Installation type', `cameras.${i}.install_type`, CAT.install_types || [])}
     ${sel('Environment', `cameras.${i}.environment`, CAT.environments || [])}
     ${fld('Remarks', `cameras.${i}.remarks`, { wide: true, area: true, ph: 'Optional – not printed in the report' })}
-    </div></div>`).join('') || '<div class="empty">No cameras yet.</div>'}
+    </div>
+    <h3 style="margin:14px 0 8px">Photos</h3>
+    <div class="grid">${slot(i, 'target', 'Target area photo', 'Photo of the area to monitor')}${slot(i, 'camera', 'Proposed camera position photo', 'Photo of where the camera goes')}</div>
+    </div>`).join('') || '<div class="empty">No cameras yet.</div>'}
   <button class="btn olive" style="width:100%" data-act="addCam">Add camera</button>
-  <div class="row end" style="margin-top:12px"><button class="btn primary" data-act="step" data-n="2">Next: photos</button></div>`;
+  <div class="row end" style="margin-top:12px"><button class="btn primary" data-act="step" data-n="2">Next: setup</button></div>`;
 }
 
 function slot(i, kind, label, ph) {
@@ -155,23 +156,14 @@ function slot(i, kind, label, ph) {
   return `<div class="slot ${p ? 'filled' : ''}"><div class="lbl">${label}</div>
     ${p ? `<img src="${p.flat}" alt="${label}">` : `<div class="ph">${ph}</div>`}
     <div class="row">
-      ${p ? `<button class="btn small primary" data-act="editPhoto" data-i="${i}" data-k="${kind}">Edit marks</button>` : ''}
+      ${p ? `<button class="btn small primary" data-act="editPhoto" data-i="${i}" data-k="${kind}">Edit marks</button><button class="btn small" data-act="addSticker" data-i="${i}" data-k="${kind}">Add sticker</button>` : ''}
       <label class="btn small ${p ? '' : 'primary'}"><input type="file" accept="image/*" capture="environment" hidden data-photo="${i}:${kind}">${p ? 'Retake' : 'Take photo'}</label>
       <label class="btn small"><input type="file" accept="image/*" hidden data-photo="${i}:${kind}">Gallery</label></div></div>`;
 }
-function photosStep() {
-  const [d, t] = photoCounts();
-  return `<div class="total"><span>Photos</span><span>${d} of ${t}</span></div>
-  ${S.cameras.map((c, i) => `<div class="card"><h3>Camera ${String(i + 1).padStart(2, '0')} – ${esc(c.location_name || 'unnamed')}</h3>
-    <div class="grid">${slot(i, 'target', 'Target area photo', 'Photo of the area to monitor')}${slot(i, 'camera', 'Proposed camera position photo', 'Photo of where the camera goes')}</div></div>`).join('')
-    || '<div class="empty">Add cameras first.</div>'}
-  <p style="color:var(--mute);font-size:.88rem;margin:4px 4px 12px">After each photo, mark the target area or the camera position. The “Location” banner and the height/distance label are added to the Word report automatically.</p>
-  <div class="row end"><button class="btn primary" data-act="step" data-n="3">Next: setup</button></div>`;
-}
-
 function setupStep() {
   return `<h2>Camera settings</h2><div class="card"><div class="grid">
     ${fld('Encoding', 'config.encoding')}${fld('Resolution', 'config.resolution')}${fld('FPS', 'config.fps', { mode: 'numeric' })}${fld('Bit rate (kbps)', 'config.bitrate_kbps', { mode: 'numeric' })}
+    ${fld('Events per day per camera', 'config.events_per_day', { type: 'number', mode: 'numeric' })}
     ${sel('WDR – day', 'config.wdr_day', ['ON', 'OFF'])}${sel('WDR – night', 'config.wdr_night', ['ON', 'OFF'])}${fld('Camera vendor', 'vendor', { wide: true })}</div></div>
   <h2>NVR / recorder</h2>
   ${S.nvr.map((d, i) => `<div class="card"><div class="spread"><h3>Item ${i + 1}</h3><button class="btn small danger" data-act="delNvr" data-i="${i}">Remove</button></div><div class="grid">
@@ -181,7 +173,7 @@ function setupStep() {
   <div class="card">${S.floor_plan ? `<img src="${S.floor_plan.flat}" alt="Floor plan" style="width:100%;border-radius:6px;margin-bottom:8px">` : '<div class="empty" style="padding:12px">Optional. Add a photo or scan of the floor plan and mark each camera on it.</div>'}
     <div class="row">${S.floor_plan ? '<button class="btn small primary" data-act="editFloor">Edit marks</button><button class="btn small danger" data-act="delFloor">Remove</button>' : ''}
     <label class="btn small ${S.floor_plan ? '' : 'primary'}"><input type="file" accept="image/*" hidden data-photo="floor">${S.floor_plan ? 'Replace' : 'Add floor plan'}</label></div></div>
-  <div class="row end"><button class="btn primary" data-act="step" data-n="4">Next: review</button></div>`;
+  <div class="row end"><button class="btn primary" data-act="step" data-n="3">Next: review</button></div>`;
 }
 
 function reviewStep() {
@@ -196,9 +188,7 @@ function reviewStep() {
     ${S.cameras.map((c, i) => { const r = poiResult(c); return `<div class="list-item"><div class="grow"><div class="t">${String(i + 1).padStart(2, '0')} · ${esc(c.location_name || 'unnamed')}${(parseInt(c.qty) || 1) > 1 ? ' ×' + parseInt(c.qty) : ''}</div>
       <div class="s">${r.ok ? `${r.height} m high (AUTO) · ${esc(c.distance_m)} m away · ${esc(r.lens)} · ${esc(c.install_type)} · ${esc(c.environment)}` : `<span style="color:var(--err)">${esc(r.error)}</span>`}</div></div>
       ${c.photos.target && c.photos.camera ? '<span class="badge">Photos ✓</span>' : '<span class="badge bad">Photos missing</span>'}</div>`; }).join('')}</div>
-  <div class="card"><div class="spread"><h3>Photos</h3><button class="btn small" data-act="step" data-n="2">Edit</button></div>
-    <div class="grid" style="grid-template-columns:repeat(4,1fr)">${S.cameras.flatMap(c => [c.photos.target, c.photos.camera]).map(p => p ? `<img src="${p.flat}" alt="" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:4px">` : '<div style="aspect-ratio:4/3;background:#eee;border-radius:4px"></div>').join('')}</div></div>
-  <div class="card"><div class="spread"><h3>Storage estimate</h3><button class="btn small" data-act="step" data-n="3">Edit</button></div>
+  <div class="card"><div class="spread"><h3>Storage estimate</h3><button class="btn small" data-act="step" data-n="2">Edit</button></div>
     <dl class="kv"><dt>Required</dt><dd>${st.total} TB</dd><dt>With 10% extra</dt><dd><b>${st.extra} TB</b></dd><dt>Recorder items</dt><dd>${S.nvr.length}</dd></dl></div>
   <button class="btn primary" style="width:100%" data-act="generate" ${iss.length ? 'disabled' : ''}>Generate Word report</button>`;
 }
@@ -349,9 +339,8 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     ov.innerHTML = `<header><button class="btn small" id="ed-cancel">Cancel</button><h3>${esc(title)}</h3><button class="btn small primary" id="ed-done">Done</button></header>
       <div class="hint">${esc(hint)}</div><div class="stage"><canvas width="${CW}" height="${CH}"></canvas></div>
       <div class="bar">
-        ${[['select', 'Move'], ['target', 'Target'], ['camera', 'Camera'], ['arrow', 'Arrow'], ['box', 'Box'], ['circle', 'Circle'], ['text', 'Text']].map(([k, l]) => `<button data-tool="${k}">${l}</button>`).join('')}
-        <div class="sep"></div><span class="tool-label">Stickers</span>
-        ${Object.entries(STICKERS).map(([k, s]) => `<button data-tool="sticker:${k}">${s.label}</button>`).join('')}
+        <span class="tool-label">Stickers</span>
+        ${Object.entries(STICKERS).map(([k, s]) => `<button class="sticker-tool" data-tool="sticker:${k}" title="${esc(s.label)}"><img src="stickers/${encodeURIComponent(s.file)}" alt=""><span>${esc(s.label)}</span></button>`).join('')}
         <div class="sep"></div><button id="ed-rot">Rotate</button><button id="ed-width-minus">W -</button><button id="ed-width-plus">W +</button><button id="ed-height-minus">H -</button><button id="ed-height-plus">H +</button><button id="ed-del">Delete</button><button id="ed-undo">Undo</button><button id="ed-redo">Redo</button>
         <div class="sep"></div><button id="ed-fit"></button></div>`;
     document.body.appendChild(ov); document.body.style.overflow = 'hidden';
@@ -452,7 +441,7 @@ document.addEventListener('change', async e => {
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-act]'); if (!el) return; const a = el.dataset.act, i = +el.dataset.i;
   if (a === 'new') { S = newSurvey(); await idb.put(S); view = 'survey'; step = 0; render(); }
-  else if (a === 'open') { S = (await idb.all()).find(s => s.id === el.dataset.id); view = 'survey'; step = 0; render(); }
+  else if (a === 'open') { S = (await idb.all()).find(s => s.id === el.dataset.id); S.config.events_per_day ??= 1000; view = 'survey'; step = 0; render(); }
   else if (a === 'delete') { if (confirm('Delete this draft and its photos?')) { await idb.del(el.dataset.id); render(); } }
   else if (a === 'home') { clearTimeout(saveTimer); if (S) { S.updated = Date.now(); await idb.put(S); } S = null; view = 'home'; render(); }
   else if (a === 'step') { step = +el.dataset.n; closeOverlay(); render(); window.scrollTo(0, 0); }
@@ -464,6 +453,8 @@ document.addEventListener('click', async e => {
   else if (a === 'delNvr') { S.nvr.splice(i, 1); scheduleSave(); render(); }
   else if (a === 'editPhoto') { const k = el.dataset.k, c = S.cameras[i]; editPhoto(c.photos[k], `Camera ${String(i + 1).padStart(2, '0')} – ${k === 'target' ? 'target area' : 'camera position'}`,
       k === 'target' ? 'Drag a box over the area the camera must see.' : 'Tap where the camera will be mounted, then rotate it to face the target.', p => { c.photos[k] = p; }); }
+    else if (a === 'addSticker') { closeOverlay(); const k = el.dataset.k, c = S.cameras[i]; editPhoto(c.photos[k], `Camera ${String(i + 1).padStart(2, '0')} – add sticker`,
+      'Choose a sticker, tap the photo to place it, then resize or rotate it.', p => { c.photos[k] = p; }); }
   else if (a === 'editFloor') editPhoto(S.floor_plan, 'Floor key plan', 'Add a camera symbol for each camera and label it.', p => { S.floor_plan = p; });
   else if (a === 'delFloor') { S.floor_plan = null; scheduleSave(); render(); }
   else if (a === 'generate') generate();
