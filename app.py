@@ -24,7 +24,8 @@ def build(survey, tmp, ref):
     if not rep.get('date', '').strip(): errors.append('Site: report date is required.')
     cams_in = survey.get('cameras', [])
     if not cams_in: errors.append('Cameras: add at least one camera.')
-    cams = []
+    cams = []; built_paths = {}
+    by_id = {c.get('id'): c for c in cams_in if isinstance(c, dict) and c.get('id')}
     for i, c in enumerate(cams_in, 1):
         tag = 'Camera %02d' % i
         for key, label in (('location_name', 'location name'), ('distance_m', 'distance'), ('target_area_m', 'target area')):
@@ -32,18 +33,30 @@ def build(survey, tmp, ref):
         angle = c.get('viewing_angle', ref.get('default_angle'))
         calc = poi_calc(ref, c.get('distance_m'), angle)
         if not calc['ok']: errors.append('%s: %s' % (tag, calc['error']))
-        photos = c.get('photos') or {}; paths = {}
+        source = by_id.get(c.get('photo_source')) if c.get('photo_source') else None
+        photos = c.get('photos') or {}
+        source_paths = built_paths.get(c.get('photo_source')) if source else None
+        if source_paths:
+            paths = source_paths
+        else:
+            paths = {}
+        if source and not source_paths:
+            photos = {**(source.get('photos') or {}), **photos}
         for kind, label in (('target', 'target area photo'), ('camera', 'camera position photo')):
+            if kind in paths:
+                continue
             ph = photos.get(kind)
             if not ph or not ph.get('flat'): errors.append('%s: %s is missing.' % (tag, label)); continue
             p = os.path.join(tmp, 'cam%d_%s.jpg' % (i, kind)); data_url_to_file(ph['flat'], p); paths[kind] = p
         try: qty = max(1, int(c.get('qty') or 1))
         except ValueError: qty = 1
         # height_m / lens_model are NOT taken from the browser – generate() recalculates them from distance + angle
+        built_paths[c.get('id')] = paths
         cams.append({'location_name': c.get('location_name', '').strip(), 'distance_m': str(c.get('distance_m', '')).strip(),
                      'target_area_m': str(c.get('target_area_m', '')).strip(), 'viewing_angle': angle,
                      'camera_model': c.get('camera_model', ''), 'install_type': c.get('install_type', ''), 'environment': c.get('environment', ''),
-                     'qty': qty, 'photo_target': paths.get('target', ''), 'photo_camera': paths.get('camera', '')})
+                     'qty': qty, 'photo_target': paths.get('target', ''), 'photo_camera': paths.get('camera', ''),
+                     'photo_page': not bool(source)})
     cfg_in = survey.get('config', {})
     try:
         cfg = {'encoding': cfg_in['encoding'], 'resolution': cfg_in['resolution'], 'fps': int(cfg_in['fps']),

@@ -45,6 +45,12 @@ function scheduleSave() {
     catch (e) { $('#saved') && ($('#saved').textContent = 'Not saved – storage full?'); } }, 400);
 }
 const totalCams = () => S.cameras.reduce((n, c) => n + Math.max(1, parseInt(c.qty) || 1), 0);
+function photoFor(c, kind, seen = new Set()) {
+  if (c.photos?.[kind]) return c.photos[kind];
+  if (!c.photo_source || seen.has(c.id)) return null;
+  seen.add(c.id); const source = S.cameras.find(x => x.id === c.photo_source);
+  return source ? photoFor(source, kind, seen) : null;
+}
 
 function storageEstimate() {
   const n = totalCams(), events = Math.max(1, parseInt(S.config.events_per_day) || 1000), s = (parseInt(S.config.bitrate_kbps) || 4096) / 4096;
@@ -62,8 +68,8 @@ function issues() {
     if (!c.location_name.trim() || !String(c.distance_m).trim() || !String(c.target_area_m).trim())
       out.push({ t: `${n}: fill in name, distance and target area`, s: 1 });
     else { const r = poiResult(c); if (!r.ok) out.push({ t: `${n}: ${r.error}`, s: 1 }); }
-    if (!c.photos.target) out.push({ t: `${n}: add the target area photo`, s: 2 });
-    if (!c.photos.camera) out.push({ t: `${n}: add the camera position photo`, s: 2 });
+    if (!photoFor(c, 'target')) out.push({ t: `${n}: add the target area photo`, s: 1 });
+    if (!photoFor(c, 'camera')) out.push({ t: `${n}: add the camera position photo`, s: 1 });
   });
   return out;
 }
@@ -132,7 +138,7 @@ function camerasStep() {
   return `<div class="total"><span>Total cameras</span><span id="totalCams">${totalCams()}</span></div>
   <p style="color:var(--mute);font-size:.86rem;margin:0 4px 12px">Height and lens are calculated automatically from Distance and Viewing angle, using the POI Camera Installation Table.</p>
   ${S.cameras.map((c, i) => `<div class="card"><div class="spread"><h3>Camera ${String(i + 1).padStart(2, '0')}${c.location_name ? ' – ' + esc(c.location_name) : ''}</h3>
-    <div class="row"><button class="btn small" data-act="dupCam" data-i="${i}">Copy</button><button class="btn small danger" data-act="delCam" data-i="${i}">Remove</button></div></div>
+    <div class="row"><button class="btn small" data-act="addSharedCam" data-i="${i}">Add camera, same photos</button><button class="btn small danger" data-act="delCam" data-i="${i}">Remove</button></div></div>
     <div class="grid">
     ${fld('Location name', `cameras.${i}.location_name`, { wide: true, ph: 'e.g. Front Counter' })}
     ${fld('Distance to target (m)', `cameras.${i}.distance_m`, { mode: 'decimal', calc: true })}${fld('Target area (m)', `cameras.${i}.target_area_m`, { mode: 'decimal' })}
@@ -144,15 +150,15 @@ function camerasStep() {
     ${sel('Environment', `cameras.${i}.environment`, CAT.environments || [])}
     ${fld('Remarks', `cameras.${i}.remarks`, { wide: true, area: true, ph: 'Optional – not printed in the report' })}
     </div>
-    <h3 style="margin:14px 0 8px">Photos</h3>
-    <div class="grid">${slot(i, 'target', 'Target area photo', 'Photo of the area to monitor')}${slot(i, 'camera', 'Proposed camera position photo', 'Photo of where the camera goes')}</div>
+    ${c.photo_source ? '' : `<h3 style="margin:14px 0 8px">Photos</h3>
+    <div class="grid">${slot(i, 'target', 'Target area photo', 'Photo of the area to monitor')}${slot(i, 'camera', 'Proposed camera position photo', 'Photo of where the camera goes')}</div>`}
     </div>`).join('') || '<div class="empty">No cameras yet.</div>'}
   <button class="btn olive" style="width:100%" data-act="addCam">Add camera</button>
   <div class="row end" style="margin-top:12px"><button class="btn primary" data-act="step" data-n="2">Next: setup</button></div>`;
 }
 
 function slot(i, kind, label, ph) {
-  const p = S.cameras[i].photos[kind];
+  const p = photoFor(S.cameras[i], kind);
   return `<div class="slot ${p ? 'filled' : ''}"><div class="lbl">${label}</div>
     ${p ? `<img src="${p.flat}" alt="${label}">` : `<div class="ph">${ph}</div>`}
     <div class="row">
@@ -187,7 +193,7 @@ function reviewStep() {
   <div class="card"><div class="spread"><h3>Cameras · ${totalCams()} total</h3><button class="btn small" data-act="step" data-n="1">Edit</button></div>
     ${S.cameras.map((c, i) => { const r = poiResult(c); return `<div class="list-item"><div class="grow"><div class="t">${String(i + 1).padStart(2, '0')} · ${esc(c.location_name || 'unnamed')}${(parseInt(c.qty) || 1) > 1 ? ' ×' + parseInt(c.qty) : ''}</div>
       <div class="s">${r.ok ? `${r.height} m high (AUTO) · ${esc(c.distance_m)} m away · ${esc(r.lens)} · ${esc(c.install_type)} · ${esc(c.environment)}` : `<span style="color:var(--err)">${esc(r.error)}</span>`}</div></div>
-      ${c.photos.target && c.photos.camera ? '<span class="badge">Photos ✓</span>' : '<span class="badge bad">Photos missing</span>'}</div>`; }).join('')}</div>
+      ${photoFor(c, 'target') && photoFor(c, 'camera') ? '<span class="badge">Photos ✓</span>' : '<span class="badge bad">Photos missing</span>'}</div>`; }).join('')}</div>
   <div class="card"><div class="spread"><h3>Storage estimate</h3><button class="btn small" data-act="step" data-n="2">Edit</button></div>
     <dl class="kv"><dt>Required</dt><dd>${st.total} TB</dd><dt>With 10% extra</dt><dd><b>${st.extra} TB</b></dd><dt>Recorder items</dt><dd>${S.nvr.length}</dd></dl></div>
   <button class="btn primary" style="width:100%" data-act="generate" ${iss.length ? 'disabled' : ''}>Generate Word report</button>`;
@@ -199,7 +205,7 @@ function closeOverlay() { $('#ov')?.remove(); }
 let lastUrl = null;
 
 async function callApi(path) {
-  const payload = clone({ ...S, cameras: S.cameras.map(c => ({ ...c, photos: { target: c.photos.target && { flat: c.photos.target.flat }, camera: c.photos.camera && { flat: c.photos.camera.flat } } })),
+  const payload = clone({ ...S, cameras: S.cameras.map(c => ({ ...c, photo_source: c.photo_source || null, photos: { target: c.photos.target && { flat: c.photos.target.flat }, camera: c.photos.camera && { flat: c.photos.camera.flat } } })),
     floor_plan: S.floor_plan && { flat: S.floor_plan.flat } });
   return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 }
@@ -459,13 +465,13 @@ document.addEventListener('click', async e => {
   else if (a === 'step') { step = +el.dataset.n; closeOverlay(); render(); window.scrollTo(0, 0); }
   else if (a === 'setType') { S.facility.type = el.dataset.v; scheduleSave(); render(); }
   else if (a === 'addCam') { S.cameras.push(newCamera()); scheduleSave(); render(); }
-  else if (a === 'dupCam') { const c = clone(S.cameras[i]); c.id = uid(); c.location_name += ' (copy)'; c.photos = { target: null, camera: null }; S.cameras.splice(i + 1, 0, c); scheduleSave(); render(); }
+  else if (a === 'addSharedCam') { const source = S.cameras[i], c = clone(source); c.id = uid(); c.location_name += ' (second camera)'; c.photo_source = source.id; c.photos = { target: null, camera: null }; S.cameras.splice(i + 1, 0, c); scheduleSave(); render(); }
   else if (a === 'delCam') { if (confirm(`Remove camera ${String(i + 1).padStart(2, '0')} and its photos?`)) { S.cameras.splice(i, 1); scheduleSave(); render(); } }
   else if (a === 'addNvr') { S.nvr.push({ device_type: '', model: '', description: '', qty: 1 }); scheduleSave(); render(); }
   else if (a === 'delNvr') { S.nvr.splice(i, 1); scheduleSave(); render(); }
-  else if (a === 'editPhoto') { const k = el.dataset.k, c = S.cameras[i]; editPhoto(c.photos[k], `Camera ${String(i + 1).padStart(2, '0')} – ${k === 'target' ? 'target area' : 'camera position'}`,
+  else if (a === 'editPhoto') { const k = el.dataset.k, c = S.cameras[i]; editPhoto(photoFor(c, k), `Camera ${String(i + 1).padStart(2, '0')} – ${k === 'target' ? 'target area' : 'camera position'}`,
       k === 'target' ? 'Drag a box over the area the camera must see.' : 'Tap where the camera will be mounted, then rotate it to face the target.', p => { c.photos[k] = p; }); }
-    else if (a === 'addSticker') { closeOverlay(); const k = el.dataset.k, c = S.cameras[i]; editPhoto(c.photos[k], `Camera ${String(i + 1).padStart(2, '0')} – add sticker`,
+  else if (a === 'addSticker') { closeOverlay(); const k = el.dataset.k, c = S.cameras[i]; editPhoto(photoFor(c, k), `Camera ${String(i + 1).padStart(2, '0')} – add sticker`,
       'Choose a sticker, tap the photo to place it, then resize or rotate it.', p => { c.photos[k] = p; }); }
   else if (a === 'editFloor') editPhoto(S.floor_plan, 'Floor key plan', 'Add a camera symbol for each camera and label it.', p => { S.floor_plan = p; });
   else if (a === 'delFloor') { S.floor_plan = null; scheduleSave(); render(); }

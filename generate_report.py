@@ -213,6 +213,8 @@ def generate(template, data, out, base_dir='.', ref=None):
     while e is not me: block.append(e); e = e.getnext()
     anchor = me
     for i, c in enumerate(cams):
+        if not c.get('photo_page', True):
+            continue
         m = {'SEC_PREFIX': '05: ' if i == 0 else '', 'LOCATION_NAME': c['location_name'], 'HEIGHT': c['height_m'],
              'DISTANCE': c['distance_m'], 'INSTALL_TYPE': c['install_type']}
         for b in block:
