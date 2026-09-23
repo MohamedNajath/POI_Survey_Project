@@ -248,7 +248,7 @@ async function addPhoto(target, file) {
   const [i, kind] = isFloor ? [null, null] : target.split(':');
   const r = await openEditor({ title: isFloor ? 'Floor key plan' : `Camera ${String(+i + 1).padStart(2, '0')} – ${kind === 'target' ? 'target area' : 'camera position'}`,
     hint: isFloor ? 'Add a camera symbol for each camera and label it.' : kind === 'target' ? 'Drag a box over the area the camera must see.' : 'Tap where the camera will be mounted, then rotate it to face the target.',
-    src: orig, ann: { fit: isFloor ? 'contain' : 'cover', objs: [] }, tool: isFloor ? 'camera' : kind === 'target' ? 'target' : 'camera' });
+    src: orig, ann: { fit: 'contain', objs: [] }, tool: isFloor ? 'camera' : kind === 'target' ? 'target' : 'camera' });
   if (!r) return;
   const photo = { orig, ann: r.ann, flat: r.flat };
   if (isFloor) S.floor_plan = photo; else S.cameras[i].photos[kind] = photo;
@@ -349,7 +349,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       <div class="bar">
         <span class="tool-label">Stickers</span>
         ${Object.entries(STICKERS).map(([k, s]) => `<button class="sticker-tool" data-tool="sticker:${k}" title="${esc(s.label)}"><img src="stickers/${encodeURIComponent(s.file)}" alt=""><span>${esc(s.label)}</span></button>`).join('')}
-        <div class="sep"></div><button id="ed-rot">Rotate sticker</button><button id="ed-width-minus">W -</button><button id="ed-width-plus">W +</button><button id="ed-height-minus">H -</button><button id="ed-height-plus">H +</button><button id="ed-del">Delete</button><button id="ed-undo">Undo</button><button id="ed-redo">Redo</button>
+        <div class="sep"></div><button id="ed-rot">Rotate sticker</button><button id="ed-del">Delete</button><button id="ed-undo">Undo</button><button id="ed-redo">Redo</button>
         <div class="sep"></div><button id="ed-fit"></button></div>`;
     document.body.appendChild(ov); document.body.style.overflow = 'hidden';
     const cv = $('canvas', ov), ctx = cv.getContext('2d'); const img = new Image();
@@ -360,7 +360,6 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       ov.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === cur));
       $('#ed-undo', ov).disabled = hi === 0; $('#ed-redo', ov).disabled = hi === hist.length - 1;
       const so = objs.find(o => o.id === sel); $('#ed-rot', ov).disabled = !(so && so.type === 'sticker');
-      ['#ed-width-minus', '#ed-width-plus', '#ed-height-minus', '#ed-height-plus'].forEach(id => $(id, ov).disabled = !(so && so.type === 'sticker'));
       $('#ed-del', ov).disabled = !so;
       $('#ed-fit', ov).textContent = fit === 'cover' ? 'Fill frame' : 'Whole photo'; };
     Object.entries(STICKERS).forEach(([key, sticker]) => {
@@ -379,7 +378,9 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
         const sticker = objs.find(o => o.id === sel);
         if (sticker?.type === 'sticker') {
           const values = [...pointers.values()];
-          pinch = { start: Math.max(1, Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y)), w: sticker.w, h: sticker.h, x: sticker.x, y: sticker.y };
+          pinch = { start: Math.max(1, Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y)),
+            startAngle: Math.atan2(values[1].y - values[0].y, values[1].x - values[0].x),
+            w: sticker.w, h: sticker.h, x: sticker.x, y: sticker.y, angle: sticker.a || 0 };
           drag = null; e.preventDefault(); return;
         }
         drag = null; e.preventDefault(); return;
@@ -401,7 +402,9 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       if (pinch && sel && pointers.size >= 2) {
         const values = [...pointers.values()]; const distance = Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y);
         const o = objs.find(x => x.id === sel); if (o?.type === 'sticker' && pinch.start) { const scale = Math.max(.25, Math.min(4, distance / pinch.start));
-          const nw = Math.max(40, pinch.w * scale), nh = Math.max(30, pinch.h * scale); o.x = pinch.x - (nw - pinch.w) / 2; o.y = pinch.y - (nh - pinch.h) / 2; o.w = nw; o.h = nh; redraw(); e.preventDefault(); }
+          const angle = Math.atan2(values[1].y - values[0].y, values[1].x - values[0].x);
+          const nw = Math.max(40, pinch.w * scale), nh = Math.max(30, pinch.h * scale); o.x = pinch.x - (nw - pinch.w) / 2; o.y = pinch.y - (nh - pinch.h) / 2; o.w = nw; o.h = nh;
+          o.a = pinch.angle + (angle - pinch.startAngle) * 180 / Math.PI; redraw(); e.preventDefault(); }
         return;
       }
       if (!drag) return; const p = pt(e);
@@ -419,15 +422,6 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     cv.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinch = null; end(); });
     ov.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => { cur = b.dataset.tool; redraw(); });
     $('#ed-rot', ov).onclick = () => { const o = objs.find(x => x.id === sel); if (o) { o.a = ((o.a || 0) + 30) % 360; commit(); redraw(); } };
-    const resizeSticker = (dw, dh) => {
-      const o = objs.find(x => x.id === sel); if (!o || o.type !== 'sticker') return;
-      const nw = Math.max(40, o.w + dw), nh = Math.max(30, o.h + dh);
-      o.x -= (nw - o.w) / 2; o.y -= (nh - o.h) / 2; o.w = nw; o.h = nh; commit(); redraw();
-    };
-    $('#ed-width-minus', ov).onclick = () => resizeSticker(-20, 0);
-    $('#ed-width-plus', ov).onclick = () => resizeSticker(20, 0);
-    $('#ed-height-minus', ov).onclick = () => resizeSticker(0, -20);
-    $('#ed-height-plus', ov).onclick = () => resizeSticker(0, 20);
     $('#ed-del', ov).onclick = () => { objs = objs.filter(o => o.id !== sel); sel = null; commit(); redraw(); };
     $('#ed-undo', ov).onclick = () => { if (hi > 0) { objs = JSON.parse(hist[--hi]); sel = null; redraw(); } };
     $('#ed-redo', ov).onclick = () => { if (hi < hist.length - 1) { objs = JSON.parse(hist[++hi]); sel = null; redraw(); } };
