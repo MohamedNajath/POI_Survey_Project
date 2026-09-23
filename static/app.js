@@ -255,6 +255,7 @@ async function editPhoto(p, title, hint, assign) {
 
 /* ============ annotation editor ============ */
 const CW = 1600, CH = 1200;
+const STICKER_DEFAULT_W = 240, STICKER_DEFAULT_H = 180;
 const STICKERS = {
   wall_mount: { label: 'Wall Mount', file: 'Wall Mount.png' },
   thin_pole: { label: 'Thin Pole', file: 'Thin Pole.png' },
@@ -342,7 +343,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       <div class="bar">
         <span class="tool-label">Stickers</span>
         ${Object.entries(STICKERS).map(([k, s]) => `<button class="sticker-tool" data-tool="sticker:${k}" title="${esc(s.label)}"><img src="stickers/${encodeURIComponent(s.file)}" alt=""><span>${esc(s.label)}</span></button>`).join('')}
-        <div class="sep"></div><button id="ed-rot">Rotate</button><button id="ed-width-minus">W -</button><button id="ed-width-plus">W +</button><button id="ed-height-minus">H -</button><button id="ed-height-plus">H +</button><button id="ed-del">Delete</button><button id="ed-undo">Undo</button><button id="ed-redo">Redo</button>
+        <div class="sep"></div><button id="ed-rot">Rotate sticker</button><button id="ed-width-minus">W -</button><button id="ed-width-plus">W +</button><button id="ed-height-minus">H -</button><button id="ed-height-plus">H +</button><button id="ed-del">Delete</button><button id="ed-undo">Undo</button><button id="ed-redo">Redo</button>
         <div class="sep"></div><button id="ed-fit"></button></div>`;
     document.body.appendChild(ov); document.body.style.overflow = 'hidden';
     const cv = $('canvas', ov), ctx = cv.getContext('2d'); const img = new Image();
@@ -352,7 +353,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     const redraw = () => { paintScene(ctx, img, fit, objs, sel, stickerImages);
       ov.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === cur));
       $('#ed-undo', ov).disabled = hi === 0; $('#ed-redo', ov).disabled = hi === hist.length - 1;
-      const so = objs.find(o => o.id === sel); $('#ed-rot', ov).disabled = !(so && (so.type === 'camera' || so.type === 'sticker'));
+      const so = objs.find(o => o.id === sel); $('#ed-rot', ov).disabled = !(so && so.type === 'sticker');
       ['#ed-width-minus', '#ed-width-plus', '#ed-height-minus', '#ed-height-plus'].forEach(id => $(id, ov).disabled = !(so && so.type === 'sticker'));
       $('#ed-del', ov).disabled = !so;
       $('#ed-fit', ov).textContent = fit === 'cover' ? 'Fill frame' : 'Whole photo'; };
@@ -368,13 +369,14 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     img.src = src;
     cv.addEventListener('pointerdown', e => {
       cv.setPointerCapture(e.pointerId); pointers.set(e.pointerId, pt(e));
-      if (pointers.size === 2 && sel) {
+      if (pointers.size === 2) {
         const sticker = objs.find(o => o.id === sel);
         if (sticker?.type === 'sticker') {
           const values = [...pointers.values()];
           pinch = { start: Math.max(1, Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y)), w: sticker.w, h: sticker.h, x: sticker.x, y: sticker.y };
           drag = null; e.preventDefault(); return;
         }
+        drag = null; e.preventDefault(); return;
       }
       const p = pt(e);
       if (cur === 'select') {
@@ -383,7 +385,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
         else { const o = hit(ctx, objs, p); sel = o ? o.id : null; drag = o ? { mode: 'move', last: p, moved: false, o } : null; }
       }
       else if (cur === 'camera') { const o = { id: uid(), type: 'camera', x: p.x, y: p.y, s: 120, a: 0 }; objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
-      else if (cur.startsWith('sticker:')) { const o = { id: uid(), type: 'sticker', sticker: cur.slice(8), x: p.x - 30, y: p.y - 45, w: 60, h: 90, a: 0 }; objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
+      else if (cur.startsWith('sticker:')) { const o = { id: uid(), type: 'sticker', sticker: cur.slice(8), x: p.x - STICKER_DEFAULT_W / 2, y: p.y - STICKER_DEFAULT_H / 2, w: STICKER_DEFAULT_W, h: STICKER_DEFAULT_H, a: 0 }; objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
       else if (cur === 'text') { const t = prompt('Label text'); if (t && t.trim()) { const o = { id: uid(), type: 'text', x: p.x, y: p.y, text: t.trim() }; objs.push(o); sel = o.id; commit(); } cur = 'select'; }
       else { const o = cur === 'arrow' ? { id: uid(), type: 'arrow', x1: p.x, y1: p.y, x2: p.x, y2: p.y } : { id: uid(), type: cur, x: p.x, y: p.y, w: 0, h: 0 };
         objs.push(o); sel = null; drag = { mode: 'draw', o, s: p }; }
