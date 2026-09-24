@@ -250,8 +250,9 @@
   "Pendant"
  ],
  "environments": [
-  "Indoor",
-  "Outdoor"
+   "Indoor",
+    "Indoor Housing",
+    "Outdoor Housing"
  ],
  "vendors": [
   "DAHUA"

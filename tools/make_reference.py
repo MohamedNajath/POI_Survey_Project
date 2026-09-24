@@ -15,7 +15,7 @@ ref = {
  "report_options": {"include_poi_table": False},
  "camera_models": ["IPC-HF7442F-Z-X"],
  "install_types": ["Wall Mount", "Ceiling Mount", "Pendant"],
- "environments": ["Indoor", "Outdoor"],
+ "environments": ["Indoor", "Indoor Housing", "Outdoor Housing"],
  "vendors": ["DAHUA"], "default_vendor": "DAHUA",
  "categories": ["Fast-food", "Restaurant / cafe", "Supermarket", "Retail shop", "Jewellery", "Pharmacy", "Bank / exchange", "Hotel", "Office", "Warehouse", "Other"],
  "nvr_defaults": [

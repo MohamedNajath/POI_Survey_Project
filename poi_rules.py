@@ -54,6 +54,27 @@ def calc(ref, distance, angle):
     if h is None: out['error'] = 'The POI table has no %g° height for %g m.' % (a, td); return out
     out.update(ok=True, height=float(h), lens=lens, table_distance=td); return out
 
+def height_options(ref, distance):
+    d = _num(distance)
+    if d is None or d <= 0: return {'ok': False, 'heights': [], 'lens': None, 'table_distance': None, 'error': 'Please enter a valid distance.'}
+    td = round_distance(d, ref.get('rules', {}).get('fractional_distance', 'ceil'))
+    row = next((r for r in ref['height_table'] if abs(r['distance'] - td) < EPS), None)
+    if row is None: return {'ok': False, 'heights': [], 'lens': None, 'table_distance': td, 'error': 'The POI table has no height for %g m.' % td}
+    lens, err = find_lens(ref, d)
+    values = [float(v) for v in row['height'].values()]
+    low, high = min(values), max(values)
+    heights = [round(low + i / 10, 1) for i in range(int(round((high - low) * 10)) + 1)]
+    return {'ok': True, 'heights': heights, 'lens': lens, 'table_distance': td, 'error': None, 'lens_error': err}
+
+def calc_height(ref, distance, height):
+    options = height_options(ref, distance)
+    if not options['ok']: return {'ok': False, 'height': None, 'lens': None, 'table_distance': options['table_distance'], 'error': options['error']}
+    if options.get('lens_error'): return {'ok': False, 'height': None, 'lens': None, 'table_distance': options['table_distance'], 'error': options['lens_error']}
+    h = _num(height)
+    if h is None or not any(abs(h - x) < EPS for x in options['heights']):
+        return {'ok': False, 'height': None, 'lens': options['lens'], 'table_distance': options['table_distance'], 'error': 'Please select a height from the POI table.'}
+    return {'ok': True, 'height': h, 'lens': options['lens'], 'table_distance': options['table_distance'], 'error': None}
+
 def validate_reference(ref):
     """Checked on every admin save. Returns (errors, warnings). Errors block saving."""
     E, Wn = [], []

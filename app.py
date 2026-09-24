@@ -2,7 +2,7 @@
 import base64, io, json, os, re, shutil, socket, subprocess, tempfile, threading, webbrowser
 from flask import Flask, request, send_file, send_from_directory, jsonify
 from generate_report import generate, load_reference
-from poi_rules import calc as poi_calc, validate_reference
+from poi_rules import calc as poi_calc, calc_height, validate_reference
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, 'template.docx')
@@ -30,8 +30,8 @@ def build(survey, tmp, ref):
         tag = 'Camera %02d' % i
         for key, label in (('location_name', 'location name'), ('distance_m', 'distance'), ('target_area_m', 'target area')):
             if not str(c.get(key, '')).strip(): errors.append('%s: %s is missing.' % (tag, label))
-        angle = c.get('viewing_angle', ref.get('default_angle'))
-        calc = poi_calc(ref, c.get('distance_m'), angle)
+        height = c.get('height_m')
+        calc = calc_height(ref, c.get('distance_m'), height)
         if not calc['ok']: errors.append('%s: %s' % (tag, calc['error']))
         source = by_id.get(c.get('photo_source')) if c.get('photo_source') else None
         photos = c.get('photos') or {}
@@ -53,7 +53,7 @@ def build(survey, tmp, ref):
         # height_m / lens_model are NOT taken from the browser – generate() recalculates them from distance + angle
         built_paths[c.get('id')] = paths
         cams.append({'location_name': c.get('location_name', '').strip(), 'distance_m': str(c.get('distance_m', '')).strip(),
-                     'target_area_m': str(c.get('target_area_m', '')).strip(), 'viewing_angle': angle,
+                     'target_area_m': str(c.get('target_area_m', '')).strip(), 'height_m': height,
                      'camera_model': c.get('camera_model', ''), 'install_type': c.get('install_type', ''), 'environment': c.get('environment', ''),
                      'qty': qty, 'photo_target': paths.get('target', ''), 'photo_camera': paths.get('camera', ''),
                      'photo_page': not bool(source)})

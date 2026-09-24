@@ -82,8 +82,8 @@ details.card[open]>summary{margin-bottom:10px}
 .editor header{display:flex;align-items:center;gap:8px;padding:calc(env(safe-area-inset-top) + 8px) 10px 8px}
 .editor header h3{flex:1;margin:0;font-size:1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .editor .hint{padding:0 12px 6px;font-size:.82rem;color:#c9c7c8}
-.editor .stage{flex:1;min-height:0;display:grid;place-items:center;padding:6px}
-.editor canvas{max-width:100%;max-height:100%;background:#000;touch-action:none;border-radius:4px}
+.editor .stage{flex:1 1 auto;min-height:0;min-width:0;display:grid;place-items:center;padding:6px;overflow:hidden}
+.editor canvas{display:block;width:min(100%, calc((100vh - 150px) * 4 / 3));height:auto;max-height:100%;aspect-ratio:4 / 3;background:#000;touch-action:none;border-radius:4px}
 .editor .bar{display:flex;gap:6px;overflow-x:auto;padding:8px 8px calc(env(safe-area-inset-bottom) + 8px);background:#232123}
 .editor .bar button{flex:0 0 auto;min-width:64px;min-height:52px;border-radius:10px;border:1px solid #4a474a;background:#2f2d2f;color:#fff;font-size:.82rem;padding:4px 8px}
 .editor .bar button.on{background:#fff;color:var(--maroon);font-weight:700;border-color:#fff}

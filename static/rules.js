@@ -33,6 +33,22 @@ const POI = (() => {
     if (h === null || h === undefined) { out.error = `The POI table has no ${g(a)}° height for ${g(td)} m.`; return out; }
     return { ok: true, height: +h, lens, table_distance: td, error: null };
   }
-  return { calc, num, g };
+  function heightOptions(ref, distance) {
+    const d = num(distance); if (d === null || d <= 0) return { ok: false, heights: [], lens: null, table_distance: null, error: 'Please enter a valid distance.' };
+    const td = roundDistance(d, (ref.rules || {}).fractional_distance || 'ceil');
+    const row = ref.height_table.find(r => Math.abs(r.distance - td) < EPS);
+    if (!row) return { ok: false, heights: [], lens: null, table_distance: td, error: `The POI table has no height for ${g(td)} m.` };
+    const [lens, err] = findLens(ref, d);
+    const values = Object.values(row.height).map(Number), low = Math.min(...values), high = Math.max(...values);
+    const heights = Array.from({ length: Math.round((high - low) * 10) + 1 }, (_, i) => +(low + i / 10).toFixed(1));
+    return { ok: true, heights, lens, table_distance: td, error: null, lens_error: err };
+  }
+  function calcHeight(ref, distance, height) {
+    const options = heightOptions(ref, distance); if (!options.ok) return { ok: false, height: null, lens: null, table_distance: options.table_distance, error: options.error };
+    if (options.lens_error) return { ok: false, height: null, lens: null, table_distance: options.table_distance, error: options.lens_error };
+    const h = num(height); if (h === null || !options.heights.some(x => Math.abs(x - h) < EPS)) return { ok: false, height: null, lens: options.lens, table_distance: options.table_distance, error: 'Please select a height from the POI table.' };
+    return { ok: true, height: h, lens: options.lens, table_distance: options.table_distance, error: null };
+  }
+  return { calc, heightOptions, calcHeight, num, g };
 })();
 if (typeof module !== 'undefined') module.exports = POI;

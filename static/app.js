@@ -25,12 +25,14 @@ const idb = {
 let CAT = {}, CAPS = {}, S = null, view = 'home', step = 0, saveTimer = null;
 const STEPS = ['Site', 'Cameras', 'Setup', 'Review'];
 
-const newCamera = () => ({ id: uid(), location_name: '', distance_m: '', target_area_m: '', viewing_angle: CAT.default_angle ?? (CAT.angles || [6])[0],
+const newCamera = () => ({ id: uid(), location_name: '', distance_m: '', target_area_m: '', height_m: '',
   camera_model: (CAT.camera_models || [])[0] || '', install_type: (CAT.install_types || ['Wall Mount'])[0], environment: (CAT.environments || ['Indoor'])[0], qty: 1, remarks: '',
   photos: { target: null, camera: null } });
 /* Height / lens are never stored on the camera – they're derived live from distance + angle via the POI reference table (rules.js),
    and recomputed again on the server from the same table when the report is generated. */
-const poiResult = c => POI.calc(CAT, c.distance_m, c.viewing_angle);
+const poiOptions = c => POI.heightOptions(CAT, c.distance_m);
+const poiResult = c => POI.calcHeight(CAT, c.distance_m, c.height_m);
+const heightSelect = (c, i) => { const options = poiOptions(c); return `<label class="f"><span>Height (m)</span><select data-bind="cameras.${i}.height_m" id="height-${i}" ${options.ok ? '' : 'disabled'}>${options.ok ? options.heights.map(h => `<option value="${h}" ${String(h) === String(c.height_m) ? 'selected' : ''}>${h}</option>`).join('') : '<option>Enter distance first</option>'}</select></label>`; };
 const newSurvey = () => ({ id: uid(), created: Date.now(), updated: Date.now(), report: { date: today(), revision: '0', number: '' },
   facility: { name: '', location: '', category: (CAT.categories || ['Other'])[0], type: 'as_build' },
   client: { name: '', mobile: '', designation: '', email: '' },
@@ -130,19 +132,17 @@ function autoPanel(c) {
   const r = poiResult(c);
   if (!String(c.distance_m).trim()) return `<div class="auto-panel"><span class="auto-tag">AUTO</span> Enter a distance to calculate height and lens from the POI reference table.</div>`;
   if (!r.ok) return `<div class="auto-panel bad"><span class="auto-tag bad">AUTO</span> ${esc(r.error)}</div>`;
-  return `<div class="auto-panel ok"><span class="auto-tag">AUTO</span>
-    <span><b>Height</b> ${r.height} m</span><span><b>Lens</b> ${esc(r.lens)}</span>
-    <span class="mute">from the POI table at ${r.table_distance} m, ${esc(String(c.viewing_angle))}\u00b0</span></div>`;
+  return `<div class="auto-panel ok"><span class="auto-tag">AUTO</span><span><b>Lens</b> ${esc(r.lens)}</span><span class="mute">from the POI table at ${r.table_distance} m</span></div>`;
 }
 function camerasStep() {
   return `<div class="total"><span>Total cameras</span><span id="totalCams">${totalCams()}</span></div>
-  <p style="color:var(--mute);font-size:.86rem;margin:0 4px 12px">Height and lens are calculated automatically from Distance and Viewing angle, using the POI Camera Installation Table.</p>
+  <p style="color:var(--mute);font-size:.86rem;margin:0 4px 12px">Enter a distance, choose a chart height, and the lens is selected automatically.</p>
   ${S.cameras.map((c, i) => `<div class="card"><div class="spread"><h3>Camera ${String(i + 1).padStart(2, '0')}${c.location_name ? ' – ' + esc(c.location_name) : ''}</h3>
     <div class="row"><button class="btn small" data-act="addSharedCam" data-i="${i}">Add camera, same photos</button><button class="btn small danger" data-act="delCam" data-i="${i}">Remove</button></div></div>
     <div class="grid">
     ${fld('Location name', `cameras.${i}.location_name`, { wide: true, ph: 'e.g. Front Counter' })}
     ${fld('Distance to target (m)', `cameras.${i}.distance_m`, { mode: 'decimal', calc: true })}${fld('Target area (m)', `cameras.${i}.target_area_m`, { mode: 'decimal' })}
-    ${sel('Viewing angle', `cameras.${i}.viewing_angle`, (CAT.angles || [6, 7, 8]).map(String), { calc: true })}${fld('Quantity', `cameras.${i}.qty`, { type: 'number', mode: 'numeric' })}
+    ${heightSelect(c, i)}${fld('Quantity', `cameras.${i}.qty`, { type: 'number', mode: 'numeric' })}
     </div>
     <div class="wide" id="auto-${i}">${autoPanel(c)}</div>
     <div class="grid" style="margin-top:10px">
@@ -222,6 +222,7 @@ async function generate() {
       <a class="btn primary" href="${lastUrl}" download="${esc(decodeURIComponent(name))}">Download Word report</a>
       ${CAPS.preview ? '<button class="btn" data-act="preview">Preview report</button>' : ''}
       <button class="btn" data-act="generate">Generate again</button>
+      <button class="btn olive" data-act="newAfterReport">New report</button>
       <button class="btn" data-act="closeOv">Edit survey</button></div>`);
   } catch (e) { overlay(`<h3>Report not generated</h3><p>Could not reach the app server. Check that it is still running.</p><div class="row end"><button class="btn primary" data-act="closeOv">Close</button></div>`); }
 }
@@ -255,7 +256,7 @@ async function addPhoto(target, file) {
   scheduleSave(); render();
 }
 async function editPhoto(p, title, hint, assign) {
-  const r = await openEditor({ title, hint: `${hint} Pinch with two fingers to zoom the selected sticker.`, src: p.orig, ann: p.ann, tool: 'select' });
+  const r = await openEditor({ title, hint: `${hint} Pinch with two fingers to zoom the selected sticker.`, src: p.orig, ann: { ...p.ann, fit: 'contain' }, tool: 'select' });
   if (r) { assign({ orig: p.orig, ann: r.ann, flat: r.flat }); scheduleSave(); render(); }
 }
 
@@ -354,7 +355,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     document.body.appendChild(ov); document.body.style.overflow = 'hidden';
     const cv = $('canvas', ov), ctx = cv.getContext('2d'); const img = new Image();
     const stickerImages = {};
-    let objs = clone(ann?.objs || []), fit = ann?.fit || 'cover', sel = null, cur = tool, drag = null, hist = [JSON.stringify(objs)], hi = 0;
+    let objs = clone(ann?.objs || []), fit = 'contain', sel = null, cur = tool, drag = null, hist = [JSON.stringify(objs)], hi = 0;
     const pointers = new Map(); let pinch = null;
     const redraw = () => { paintScene(ctx, img, fit, objs, sel, stickerImages);
       ov.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === cur));
@@ -440,10 +441,17 @@ function refreshAuto(bindPath) {
   const i = +m[1]; const panel = document.getElementById('auto-' + i); if (!panel) return false;
   panel.innerHTML = autoPanel(S.cameras[i]); return true;
 }
+function refreshHeight(bindPath) {
+  const m = bindPath.match(/^cameras\.(\d+)\./); if (!m) return false;
+  const i = +m[1], options = poiOptions(S.cameras[i]), select = document.getElementById('height-' + i); if (!select) return false;
+  if (options.ok && !options.heights.some(h => String(h) === String(S.cameras[i].height_m))) S.cameras[i].height_m = options.heights[0];
+  const field = select.closest('.f'); if (!field) return false;
+  field.outerHTML = heightSelect(S.cameras[i], i); return true;
+}
 document.addEventListener('input', e => {
   const b = e.target.dataset?.bind; if (!b || !S) return; set(S, b, e.target.value); scheduleSave();
   if (b.endsWith('.qty') && $('#totalCams')) $('#totalCams').textContent = totalCams();
-  if (b.endsWith('.distance_m')) refreshAuto(b);
+  if (b.endsWith('.distance_m')) { refreshHeight(b); refreshAuto(b); }
 });
 document.addEventListener('change', async e => {
   const t = e.target;
@@ -453,7 +461,7 @@ document.addEventListener('change', async e => {
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-act]'); if (!el) return; const a = el.dataset.act, i = +el.dataset.i;
   if (a === 'new') { S = newSurvey(); await idb.put(S); view = 'survey'; step = 0; render(); }
-  else if (a === 'open') { S = (await idb.all()).find(s => s.id === el.dataset.id); S.config.events_per_day ??= 1000; view = 'survey'; step = 0; render(); }
+  else if (a === 'open') { S = (await idb.all()).find(s => s.id === el.dataset.id); S.config.events_per_day ??= 1000; S.cameras.forEach(c => { if (!c.height_m && c.viewing_angle != null) { const old = POI.calc(CAT, c.distance_m, c.viewing_angle); if (old.ok) c.height_m = old.height; } }); view = 'survey'; step = 0; render(); }
   else if (a === 'delete') { if (confirm('Delete this draft and its photos?')) { await idb.del(el.dataset.id); render(); } }
   else if (a === 'home') { clearTimeout(saveTimer); if (S) { S.updated = Date.now(); await idb.put(S); } S = null; view = 'home'; render(); }
   else if (a === 'step') { step = +el.dataset.n; closeOverlay(); render(); window.scrollTo(0, 0); }
@@ -470,6 +478,7 @@ document.addEventListener('click', async e => {
   else if (a === 'editFloor') editPhoto(S.floor_plan, 'Floor key plan', 'Add a camera symbol for each camera and label it.', p => { S.floor_plan = p; });
   else if (a === 'delFloor') { S.floor_plan = null; scheduleSave(); render(); }
   else if (a === 'generate') generate();
+  else if (a === 'newAfterReport') { closeOverlay(); S = newSurvey(); await idb.put(S); view = 'survey'; step = 0; render(); window.scrollTo(0, 0); }
   else if (a === 'preview') preview();
   else if (a === 'closeOv') closeOverlay();
 });

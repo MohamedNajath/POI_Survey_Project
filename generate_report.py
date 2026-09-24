@@ -6,7 +6,7 @@ import sys, os, io, json, copy, zipfile, tempfile, shutil, datetime
 from lxml import etree
 from PIL import Image
 from docx_xml import *
-from poi_rules import calc as poi_calc, validate_reference
+from poi_rules import calc as poi_calc, calc_height, validate_reference
 
 def load_reference(base_dir='.'):
     for p in (os.path.join(base_dir, 'reference.json'), os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reference.default.json')):
@@ -137,7 +137,7 @@ def generate(template, data, out, base_dir='.', ref=None):
     ref = ref or load_reference(base_dir)
     calc_errors = []
     for i, c in enumerate(data['cameras'], 1):
-        r = poi_calc(ref, c.get('distance_m'), c.get('viewing_angle', ref.get('default_angle')))
+        r = calc_height(ref, c.get('distance_m'), c.get('height_m'))
         if not r['ok']: calc_errors.append('Camera %02d (%s): %s' % (i, c.get('location_name', '?'), r['error'])); continue
         c['height_m'] = ('%g' % r['height']); c['lens_model'] = r['lens']; c['_table_distance'] = r['table_distance']
     if calc_errors: raise ValueError('POI reference calculation failed:\n' + '\n'.join(calc_errors))
