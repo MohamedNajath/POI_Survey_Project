@@ -149,7 +149,10 @@ replace_in_paragraph(head, 'Location Image Reference: ', '{{SEC_PREFIX}}Location
 replace_in_paragraph(head, 'Receiving Entrance', '{{LOCATION_NAME}}')
 for e in block:
     for p in e.iter(W('p')):
-        if 'Location: Receiving Entrance' in ptext(p): replace_in_paragraph(p, 'Receiving Entrance', '{{LOCATION_NAME}}')
+        if 'Location: Receiving Entrance' in ptext(p):
+            for r in p.findall(W('r')): p.remove(r)
+            r1 = etree.SubElement(p, W('r')); r1pr = etree.SubElement(r1, W('rPr')); etree.SubElement(r1pr, W('b')); set_t(etree.SubElement(r1, W('t')), 'Location: ')
+            r2 = etree.SubElement(p, W('r')); set_t(etree.SubElement(r2, W('t')), '{{LOCATION_NAME}}')
         elif 'Camera' in ptext(p) and 'Height:' in ptext(p):
             rpr = copy.deepcopy(xp(p, './/w:r/w:rPr')[0]) if xp(p, './/w:r/w:rPr') else None
             for r in p.findall(W('r')): p.remove(r)

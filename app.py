@@ -77,7 +77,7 @@ def build(survey, tmp, ref):
         'vendor': survey.get('vendor', 'DAHUA'), 'cameras': cams, 'author': survey.get('author', ''),
         'nvr': [{'device_type': d.get('device_type', ''), 'model': d.get('model', ''), 'description': d.get('description', ''), 'qty': d.get('qty', 1)}
                 for d in survey.get('nvr', [])],
-        'verification': {'items': ['pending'] * 6, 'stamp_image': None}, 'floor_plan': fpp,
+        'verification': {'items': ['verified'] * 4 + ['pending'] * 2, 'stamp_image': None}, 'floor_plan': fpp,
     }, []
 
 def make_docx(survey, tmp):
