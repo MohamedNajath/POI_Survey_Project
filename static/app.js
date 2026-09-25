@@ -372,6 +372,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     const commit = () => { hist = hist.slice(0, hi + 1); hist.push(JSON.stringify(objs)); hi = hist.length - 1; };
     const photoReady = new Promise(resolve => { img.onload = () => { redraw(); resolve(); }; img.onerror = resolve; });
     const pt = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * CW / r.width, y: (e.clientY - r.top) * CH / r.height }; };
+    const midpoint = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
     img.src = src;
     cv.addEventListener('pointerdown', e => {
       cv.setPointerCapture(e.pointerId); pointers.set(e.pointerId, pt(e));
@@ -379,9 +380,14 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
         const sticker = objs.find(o => o.id === sel);
         if (sticker?.type === 'sticker') {
           const values = [...pointers.values()];
-          pinch = { start: Math.max(1, Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y)),
+          pinch = {
+            startDistance: Math.max(1, Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y)),
             startAngle: Math.atan2(values[1].y - values[0].y, values[1].x - values[0].x),
-            w: sticker.w, h: sticker.h, x: sticker.x, y: sticker.y, angle: sticker.a || 0 };
+            startCenter: midpoint(values[0], values[1]),
+            startRect: { x: sticker.x, y: sticker.y, w: sticker.w, h: sticker.h },
+            angle: sticker.a || 0,
+            lastCenter: midpoint(values[0], values[1])
+          };
           drag = null; e.preventDefault(); return;
         }
         drag = null; e.preventDefault(); return;
@@ -401,11 +407,23 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     cv.addEventListener('pointermove', e => {
       if (pointers.has(e.pointerId)) pointers.set(e.pointerId, pt(e));
       if (pinch && sel && pointers.size >= 2) {
-        const values = [...pointers.values()]; const distance = Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y);
-        const o = objs.find(x => x.id === sel); if (o?.type === 'sticker' && pinch.start) { const scale = Math.max(.25, Math.min(4, distance / pinch.start));
-          const angle = Math.atan2(values[1].y - values[0].y, values[1].x - values[0].x);
-          const nw = Math.max(40, pinch.w * scale), nh = Math.max(30, pinch.h * scale); o.x = pinch.x - (nw - pinch.w) / 2; o.y = pinch.y - (nh - pinch.h) / 2; o.w = nw; o.h = nh;
-          o.a = pinch.angle + (angle - pinch.startAngle) * 180 / Math.PI; redraw(); e.preventDefault(); }
+        const values = [...pointers.values()]; if (values.length < 2) return;
+        const o = objs.find(x => x.id === sel); if (!o || o.type !== 'sticker') return;
+        const distance = Math.max(1, Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y));
+        const angle = Math.atan2(values[1].y - values[0].y, values[1].x - values[0].x);
+        const center = midpoint(values[0], values[1]);
+        const scale = Math.max(.35, Math.min(6, distance / pinch.startDistance));
+        const nw = Math.max(40, pinch.startRect.w * scale), nh = Math.max(30, pinch.startRect.h * scale);
+        const prevCenter = pinch.lastCenter || pinch.startCenter;
+        const dx = center.x - prevCenter.x, dy = center.y - prevCenter.y;
+        const centerX = pinch.startRect.x + pinch.startRect.w / 2 + dx;
+        const centerY = pinch.startRect.y + pinch.startRect.h / 2 + dy;
+        o.x = centerX - nw / 2;
+        o.y = centerY - nh / 2;
+        o.w = nw; o.h = nh;
+        o.a = pinch.angle + (angle - pinch.startAngle) * 180 / Math.PI;
+        pinch.lastCenter = center;
+        redraw(); e.preventDefault();
         return;
       }
       if (!drag) return; const p = pt(e);
