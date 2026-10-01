@@ -262,7 +262,8 @@ async function editPhoto(p, title, hint, assign) {
 
 /* ============ annotation editor ============ */
 const CW = 1600, CH = 1200;
-const STICKER_DEFAULT_W = 240, STICKER_DEFAULT_H = 180;
+const STICKER_DEFAULT_W = 320, STICKER_DEFAULT_H = 180;
+const STICKER_ASPECT = 16 / 9;
 const STICKERS = {
   wall_mount: { label: 'Wall Mount', file: 'Wall Mount.png' },
   thin_pole: { label: 'Thin Pole', file: 'Thin Pole.png' },
@@ -440,7 +441,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
         const angle = Math.atan2(values[1].y - values[0].y, values[1].x - values[0].x);
         const center = midpoint(values[0], values[1]);
         const scale = Math.max(.35, Math.min(6, distance / pinch.startDistance));
-        const nw = Math.max(40, pinch.startRect.w * scale), nh = Math.max(30, pinch.startRect.h * scale);
+        const nw = Math.max(40, pinch.startRect.w * scale), nh = nw / STICKER_ASPECT;
         const prevCenter = pinch.lastCenter || pinch.startCenter;
         const dx = center.x - prevCenter.x, dy = center.y - prevCenter.y;
         const centerX = pinch.startRect.x + pinch.startRect.w / 2 + dx;
@@ -457,7 +458,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       if (drag.mode === 'scale') { const o = drag.o, angle = (o.a || 0) * Math.PI / 180, dx = p.x - drag.center.x, dy = p.y - drag.center.y;
         const localX = dx * Math.cos(angle) + dy * Math.sin(angle), localY = -dx * Math.sin(angle) + dy * Math.cos(angle);
         const scale = Math.max(.2, Math.min(5, Math.hypot(localX, localY) / drag.distance));
-        o.w = Math.max(40, drag.w * scale); o.h = Math.max(30, drag.h * scale);
+        o.w = Math.max(40, drag.w * scale); o.h = o.w / STICKER_ASPECT;
         o.x = drag.center.x - o.w / 2; o.y = drag.center.y - o.h / 2; redraw(); return; }
       if (drag.mode === 'move') { moveObj(drag.o, p.x - drag.last.x, p.y - drag.last.y); drag.last = p; drag.moved = true; }
       else { const o = drag.o; if (o.type === 'arrow') { o.x2 = p.x; o.y2 = p.y; } else { o.x = Math.min(drag.s.x, p.x); o.y = Math.min(drag.s.y, p.y); o.w = Math.abs(p.x - drag.s.x); o.h = Math.abs(p.y - drag.s.y); } }
