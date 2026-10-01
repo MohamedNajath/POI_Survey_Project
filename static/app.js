@@ -89,9 +89,8 @@ function render() { view === 'home' ? renderHome() : renderSurvey(); }
 async function renderHome() {
   const list = (await idb.all()).sort((a, b) => b.updated - a.updated);
   $('#app').innerHTML = `<div class="top"><h1>POI surveys</h1></div><main>
-    <button class="btn primary" style="width:100%" data-act="new">New survey</button>
+    <button class="btn primary" style="width:100%" data-act="new">MOI New Survey</button>
     <button class="btn" style="width:100%;margin-top:8px" data-act="newNoLetterhead">Generate report without letterhead</button>
-    <button class="btn" style="width:100%;margin-top:8px" data-act="openAdmin">POI reference table (admin)</button>
     <h2>Drafts</h2>
     ${list.length ? `<div class="card">${list.map(s => `<div class="list-item"><div class="grow" data-act="open" data-id="${s.id}" style="cursor:pointer">
       <div class="t">${esc(s.facility.name || 'Untitled survey')}</div>
