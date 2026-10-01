@@ -279,17 +279,17 @@ const CW = 1600, CH = 1200;
 const STICKER_DEFAULT_W = 576, STICKER_DEFAULT_H = 640;
 const STICKER_ASPECT = 180 / 200;
 const STICKERS = {
-  wall_mount: { label: 'Wall Mount', file: 'Wall Mount.png' },
-  thin_pole: { label: 'Thin Pole', file: 'Thin Pole.png' },
-  thick_pole: { label: 'Thick Pole', file: 'Thick Pole.png' },
   target_area: { label: 'Target Area', file: 'Target Area.png' },
+  wall_mount: { label: 'Wall Mount', file: 'Wall Mount.png' },
+  ceiling_mount: { label: 'Ceiling Mount', file: 'Ceiling Mount.png' },
   rhs_wall_mount: { label: 'RHS Wall Mount', file: 'RHS Wall Mount.png' },
   pm: { label: 'PM', file: 'PM.png' },
-  pendant: { label: 'Pendant', file: 'Pendant.png' },
-  outline: { label: 'Outline', file: 'Outline.png' },
   lhs_wall_mount: { label: 'LHS Wall Mount', file: 'LHS Wall Mount.png' },
   hanging_camera: { label: 'Hanging Camera', file: 'Hanging Camera.png' },
-  ceiling_mount: { label: 'Ceiling Mount', file: 'Ceiling Mount.png' }
+  thin_pole: { label: 'Thin Pole', file: 'Thin Pole.png' },
+  thick_pole: { label: 'Thick Pole', file: 'Thick Pole.png' },
+  pendant: { label: 'Pendant', file: 'Pendant.png' },
+  outline: { label: 'Outline', file: 'Outline.png' }
 };
 function paintScene(ctx, img, fit, objs, selId, stickerImages) {
   ctx.clearRect(0, 0, CW, CH); ctx.fillStyle = fit === 'contain' ? '#1a1a1a' : '#000'; ctx.fillRect(0, 0, CW, CH);
@@ -353,6 +353,12 @@ function distSeg(p, a, b) { const dx = b.x - a.x, dy = b.y - a.y, l = dx * dx + 
 function hit(ctx, objs, p) {
   for (let i = objs.length - 1; i >= 0; i--) { const o = objs[i];
     if (o.type === 'arrow') { if (distSeg(p, { x: o.x1, y: o.y1 }, { x: o.x2, y: o.y2 }) < 28) return o; continue; }
+    if (o.type === 'sticker') {
+      const dx = p.x - (o.x + o.w / 2), dy = p.y - (o.y + o.h / 2), angle = (o.a || 0) * Math.PI / 180;
+      const x = dx * Math.cos(angle) + dy * Math.sin(angle), y = -dx * Math.sin(angle) + dy * Math.cos(angle);
+      if (Math.abs(x) <= o.w / 2 && Math.abs(y) <= o.h / 2) return o;
+      continue;
+    }
     const b = bbox(ctx, o), pad = (o.type === 'box' || o.type === 'circle') ? 0 : 0;
     if (p.x >= b.x - pad && p.x <= b.x + b.w + pad && p.y >= b.y - pad && p.y <= b.y + b.h + pad) return o; }
   return null;
@@ -382,9 +388,9 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     ov.innerHTML = `<header><button class="btn small" id="ed-cancel">Cancel</button><h3>${esc(title)}</h3><button class="btn small primary" id="ed-done">Done</button></header>
       <div class="hint">${esc(hint)}</div><div class="stage"><canvas width="${CW}" height="${CH}"></canvas></div>
       <div class="bar">
-        <span class="tool-label">Stickers</span>
+        <button id="ed-del" title="Delete selected sticker or mark" aria-label="Delete selected sticker or mark">🗑 Delete</button><span class="tool-label">Stickers</span>
         ${Object.entries(STICKERS).map(([k, s]) => `<button class="sticker-tool" data-tool="sticker:${k}" title="${esc(s.label)}"><img src="stickers/${encodeURIComponent(s.file)}" alt=""><span>${esc(s.label)}</span></button>`).join('')}
-        <div class="sep"></div><button id="ed-rot">Rotate sticker</button><button id="ed-del">Delete</button><button id="ed-undo">Undo</button><button id="ed-redo">Redo</button>
+        <div class="sep"></div><button id="ed-rot">Rotate sticker</button><button id="ed-undo">Undo</button><button id="ed-redo">Redo</button>
         <div class="sep"></div><button id="ed-fit"></button></div>`;
     document.body.appendChild(ov); document.body.style.overflow = 'hidden';
     const cv = $('canvas', ov), ctx = cv.getContext('2d'); const img = new Image();
@@ -395,7 +401,6 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       ov.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === cur));
       $('#ed-undo', ov).disabled = hi === 0; $('#ed-redo', ov).disabled = hi === hist.length - 1;
       const so = objs.find(o => o.id === sel); $('#ed-rot', ov).disabled = !(so && so.type === 'sticker');
-      $('#ed-del', ov).disabled = !so;
       $('#ed-fit', ov).textContent = fit === 'cover' ? 'Fill frame' : 'Whole photo'; };
     Object.entries(STICKERS).forEach(([key, sticker]) => {
       const image = new Image(); image.onload = redraw; image.src = `stickers/${encodeURIComponent(sticker.file)}`; stickerImages[key] = image;
@@ -487,7 +492,12 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
     cv.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinch = null; end(); });
     ov.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => { cur = b.dataset.tool; redraw(); });
     $('#ed-rot', ov).onclick = () => { const o = objs.find(x => x.id === sel); if (o) { o.a = ((o.a || 0) + 30) % 360; commit(); redraw(); } };
-    $('#ed-del', ov).onclick = () => { objs = objs.filter(o => o.id !== sel); sel = null; commit(); redraw(); };
+    $('#ed-del', ov).onclick = () => {
+      let index = objs.findIndex(o => o.id === sel);
+      if (index < 0) index = objs.findLastIndex(o => o.type === 'sticker');
+      if (index < 0) return;
+      objs.splice(index, 1); sel = null; commit(); redraw();
+    };
     $('#ed-undo', ov).onclick = () => { if (hi > 0) { objs = JSON.parse(hist[--hi]); sel = null; redraw(); } };
     $('#ed-redo', ov).onclick = () => { if (hi < hist.length - 1) { objs = JSON.parse(hist[++hi]); sel = null; redraw(); } };
     $('#ed-fit', ov).onclick = () => { fit = fit === 'cover' ? 'contain' : 'cover'; redraw(); };
