@@ -33,11 +33,11 @@ const newCamera = () => ({ id: uid(), location_name: '', distance_m: '', target_
 const poiOptions = c => POI.heightOptions(CAT, c.distance_m);
 const poiResult = c => POI.calcHeight(CAT, c.distance_m, c.height_m);
 const heightSelect = (c, i) => { const options = poiOptions(c); return `<label class="f"><span>Height (m)</span><select data-bind="cameras.${i}.height_m" id="height-${i}" ${options.ok ? '' : 'disabled'}>${options.ok ? options.heights.map(h => `<option value="${h}" ${String(h) === String(c.height_m) ? 'selected' : ''}>${h}</option>`).join('') : '<option>Enter distance first</option>'}</select></label>`; };
-const newSurvey = () => ({ id: uid(), created: Date.now(), updated: Date.now(), report: { date: today(), revision: '0', number: '' },
+const newSurvey = () => ({ id: uid(), created: Date.now(), updated: Date.now(), include_letterhead: true, report: { date: today(), revision: '0', number: '' },
   facility: { name: '', location: '', category: (CAT.categories || ['Other'])[0], type: 'as_build' },
   client: { name: '', mobile: '', designation: '', email: '' },
   contractor: { company: '', name: '', mobile: '', designation: '', email: '', certified_engineer: '', certified_technician: '' },
-  config: { encoding: 'H.264', resolution: '2560x1440p', fps: 25, bitrate_kbps: 4096, wdr_day: 'ON', wdr_night: 'OFF', events_per_day: 1000 },
+  config: { encoding: 'H.264', resolution: '2560x1440p', fps: 25, bitrate_kbps: 4096, wdr_day: 'ON', wdr_night: 'OFF', events_per_day: 1000, event_days: '90', extra_storage_pct: '10' },
   vendor: 'DAHUA', author: '', cameras: [newCamera()], nvr: clone(CAT.nvr_defaults || []), floor_plan: null });
 
 function scheduleSave() {
@@ -56,8 +56,10 @@ function photoFor(c, kind, seen = new Set()) {
 
 function storageEstimate() {
   const n = totalCams(), events = Math.max(1, parseInt(S.config.events_per_day) || 1000), s = (parseInt(S.config.bitrate_kbps) || 4096) / 4096;
-  const day = 21.2 * s * events / 1024, ev = day * 90 * n / 1024, img = (events / 1024) * 90 * n, total = ev + img / 1024;
-  return { total: total.toFixed(2), extra: (total * 1.1).toFixed(2) };
+  const eventDays = [30, 60, 90].includes(Number(S.config.event_days)) ? Number(S.config.event_days) : 90;
+  const day = 21.2 * s * events / 1024, ev = day * eventDays * n / 1024, img = (events / 1024) * eventDays * n, total = ev + img / 1024;
+  const extraPct = Number(S.config.extra_storage_pct) === 20 ? 20 : 10;
+  return { total: total.toFixed(2), eventDays, extraPct, extra: (total * (1 + extraPct / 100)).toFixed(2) };
 }
 
 function issues() {
@@ -88,6 +90,7 @@ async function renderHome() {
   const list = (await idb.all()).sort((a, b) => b.updated - a.updated);
   $('#app').innerHTML = `<div class="top"><h1>POI surveys</h1></div><main>
     <button class="btn primary" style="width:100%" data-act="new">New survey</button>
+    <button class="btn" style="width:100%;margin-top:8px" data-act="newNoLetterhead">Generate report without letterhead</button>
     <button class="btn" style="width:100%;margin-top:8px" data-act="openAdmin">POI reference table (admin)</button>
     <h2>Drafts</h2>
     ${list.length ? `<div class="card">${list.map(s => `<div class="list-item"><div class="grow" data-act="open" data-id="${s.id}" style="cursor:pointer">
@@ -97,6 +100,16 @@ async function renderHome() {
       <button class="btn small danger" data-act="delete" data-id="${s.id}" aria-label="Delete draft">Delete</button></div>`).join('')}</div>`
       : `<div class="empty">No surveys yet. Start one and it saves automatically on this device.</div>`}
   </main>`;
+}
+
+function prepareDraft(survey) {
+  if (!survey) return null;
+  survey.config ??= {};
+  survey.config.events_per_day ??= 1000;
+  survey.config.event_days ??= '90';
+  survey.config.extra_storage_pct ??= '10';
+  survey.cameras.forEach(c => { if (!c.height_m && c.viewing_angle != null) { const old = POI.calc(CAT, c.distance_m, c.viewing_angle); if (old.ok) c.height_m = old.height; } });
+  return survey;
 }
 
 function renderSurvey() {
@@ -169,7 +182,7 @@ function slot(i, kind, label, ph) {
 function setupStep() {
   return `<h2>Camera settings</h2><div class="card"><div class="grid">
     ${fld('Encoding', 'config.encoding')}${fld('Resolution', 'config.resolution')}${fld('FPS', 'config.fps', { mode: 'numeric' })}${fld('Bit rate (kbps)', 'config.bitrate_kbps', { mode: 'numeric' })}
-    ${fld('Events per day per camera', 'config.events_per_day', { type: 'number', mode: 'numeric' })}
+    ${fld('Events per day per camera', 'config.events_per_day', { type: 'number', mode: 'numeric' })}${sel('Event recording days', 'config.event_days', ['30', '60', '90'])}${sel('Storage extra (%)', 'config.extra_storage_pct', ['10', '20'])}
     ${sel('WDR – day', 'config.wdr_day', ['ON', 'OFF'])}${sel('WDR – night', 'config.wdr_night', ['ON', 'OFF'])}${fld('Camera vendor', 'vendor', { wide: true })}</div></div>
   <h2>NVR / recorder</h2>
   ${S.nvr.map((d, i) => `<div class="card"><div class="spread"><h3>Item ${i + 1}</h3><button class="btn small danger" data-act="delNvr" data-i="${i}">Remove</button></div><div class="grid">
@@ -195,7 +208,7 @@ function reviewStep() {
       <div class="s">${r.ok ? `${r.height} m high (AUTO) · ${esc(c.distance_m)} m away · ${esc(r.lens)} · ${esc(c.install_type)} · ${esc(c.environment)}` : `<span style="color:var(--err)">${esc(r.error)}</span>`}</div></div>
       ${photoFor(c, 'target') && photoFor(c, 'camera') ? '<span class="badge">Photos ✓</span>' : '<span class="badge bad">Photos missing</span>'}</div>`; }).join('')}</div>
   <div class="card"><div class="spread"><h3>Storage estimate</h3><button class="btn small" data-act="step" data-n="2">Edit</button></div>
-    <dl class="kv"><dt>Required</dt><dd>${st.total} TB</dd><dt>With 10% extra</dt><dd><b>${st.extra} TB</b></dd><dt>Recorder items</dt><dd>${S.nvr.length}</dd></dl></div>
+    <dl class="kv"><dt>Required (${st.eventDays} days)</dt><dd>${st.total} TB</dd><dt>With ${st.extraPct}% extra</dt><dd><b>${st.extra} TB</b></dd><dt>Recorder items</dt><dd>${S.nvr.length}</dd></dl></div>
   <button class="btn primary" style="width:100%" data-act="generate" ${iss.length ? 'disabled' : ''}>Generate Word report</button>`;
 }
 
@@ -203,16 +216,18 @@ function reviewStep() {
 function overlay(html) { closeOverlay(); const o = document.createElement('div'); o.className = 'overlay'; o.id = 'ov'; o.innerHTML = `<div class="card">${html}</div>`; document.body.appendChild(o); }
 function closeOverlay() { $('#ov')?.remove(); }
 let lastUrl = null;
+let lastIncludeLetterhead = true;
 
 async function callApi(path) {
   const payload = clone({ ...S, cameras: S.cameras.map(c => ({ ...c, photo_source: c.photo_source || null, photos: { target: c.photos.target && { flat: c.photos.target.flat }, camera: c.photos.camera && { flat: c.photos.camera.flat } } })),
     floor_plan: S.floor_plan && { flat: S.floor_plan.flat } });
   return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 }
-async function generate() {
+async function generate(includeLetterhead = S.include_letterhead !== false) {
+  lastIncludeLetterhead = includeLetterhead;
   overlay('<div class="spin"></div><p style="text-align:center;margin:0">Generating your Word report…</p>');
   try {
-    const r = await callApi('/api/report');
+    const r = await callApi(`/api/report?letterhead=${includeLetterhead ? '1' : '0'}`);
     if (!r.ok) { const j = await r.json().catch(() => ({})); return overlay(`<h3>Report not generated</h3><ul class="issues">${(j.errors || ['Something went wrong.']).map(e => `<li>${esc(e)}</li>`).join('')}</ul>
       <div class="row end" style="margin-top:12px"><button class="btn primary" data-act="closeOv">Back to survey</button></div>`); }
     const blob = await r.blob(); if (lastUrl) URL.revokeObjectURL(lastUrl); lastUrl = URL.createObjectURL(blob);
@@ -221,14 +236,14 @@ async function generate() {
       <div class="row" style="flex-direction:column;align-items:stretch">
       <a class="btn primary" href="${lastUrl}" download="${esc(decodeURIComponent(name))}">Download Word report</a>
       ${CAPS.preview ? '<button class="btn" data-act="preview">Preview report</button>' : ''}
-      <button class="btn" data-act="generate">Generate again</button>
+      <button class="btn" data-act="generateAgain">Generate again</button>
       <button class="btn olive" data-act="newAfterReport">New report</button>
       <button class="btn" data-act="closeOv">Edit survey</button></div>`);
   } catch (e) { overlay(`<h3>Report not generated</h3><p>Could not reach the app server. Check that it is still running.</p><div class="row end"><button class="btn primary" data-act="closeOv">Close</button></div>`); }
 }
 async function preview() {
   overlay('<div class="spin"></div><p style="text-align:center;margin:0">Preparing preview…</p>');
-  const r = await callApi('/api/preview');
+  const r = await callApi(`/api/preview?letterhead=${lastIncludeLetterhead ? '1' : '0'}`);
   if (!r.ok) { const j = await r.json().catch(() => ({})); return overlay(`<h3>Preview failed</h3><p>${esc((j.errors || [''])[0])}</p><div class="row end"><button class="btn primary" data-act="closeOv">Close</button></div>`); }
   const url = URL.createObjectURL(await r.blob());
   overlay(`<h3>Preview ready</h3><div class="row" style="flex-direction:column;align-items:stretch"><a class="btn primary" href="${url}" target="_blank" rel="noopener">Open preview</a>
@@ -510,8 +525,16 @@ document.addEventListener('change', async e => {
 });
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-act]'); if (!el) return; const a = el.dataset.act, i = +el.dataset.i;
-  if (a === 'new') { S = newSurvey(); await idb.put(S); view = 'survey'; step = 0; render(); }
-  else if (a === 'open') { S = (await idb.all()).find(s => s.id === el.dataset.id); S.config.events_per_day ??= 1000; S.cameras.forEach(c => { if (!c.height_m && c.viewing_angle != null) { const old = POI.calc(CAT, c.distance_m, c.viewing_angle); if (old.ok) c.height_m = old.height; } }); view = 'survey'; step = 0; render(); }
+  if (a === 'new' || a === 'newNoLetterhead') {
+    S = newSurvey();
+    if (a === 'newNoLetterhead') S.include_letterhead = false;
+    await idb.put(S); view = 'survey'; step = 0; render();
+  }
+  else if (a === 'open') {
+    S = prepareDraft((await idb.all()).find(s => s.id === el.dataset.id));
+    if (!S) { renderHome(); return; }
+    view = 'survey'; step = 0; render();
+  }
   else if (a === 'delete') { if (confirm('Delete this draft and its photos?')) { await idb.del(el.dataset.id); render(); } }
   else if (a === 'home') { clearTimeout(saveTimer); if (S) { S.updated = Date.now(); await idb.put(S); } S = null; view = 'home'; render(); }
   else if (a === 'step') { step = +el.dataset.n; closeOverlay(); render(); window.scrollTo(0, 0); }
@@ -528,6 +551,7 @@ document.addEventListener('click', async e => {
   else if (a === 'editFloor') editPhoto(S.floor_plan, 'Floor key plan', 'Add a camera symbol for each camera and label it.', p => { S.floor_plan = p; });
   else if (a === 'delFloor') { S.floor_plan = null; scheduleSave(); render(); }
   else if (a === 'generate') generate();
+  else if (a === 'generateAgain') generate(lastIncludeLetterhead);
   else if (a === 'newAfterReport') { closeOverlay(); S = newSurvey(); await idb.put(S); view = 'survey'; step = 0; render(); window.scrollTo(0, 0); }
   else if (a === 'preview') preview();
   else if (a === 'closeOv') closeOverlay();

@@ -62,8 +62,10 @@ def build(survey, tmp, ref):
         cfg = {'encoding': cfg_in['encoding'], 'resolution': cfg_in['resolution'], 'fps': int(cfg_in['fps']),
                'bitrate_kbps': int(cfg_in['bitrate_kbps']), 'wdr_day': cfg_in['wdr_day'], 'wdr_night': cfg_in['wdr_night']}
         events_per_day = int(cfg_in.get('events_per_day', 1000))
-        if events_per_day <= 0: raise ValueError()
-    except (KeyError, ValueError, TypeError): errors.append('Setup: camera settings are incomplete (fps, bitrate, and events per day must be valid positive numbers).')
+        event_days = int(cfg_in.get('event_days', 90))
+        extra_pct = int(cfg_in.get('extra_storage_pct', 10))
+        if events_per_day <= 0 or event_days not in (30, 60, 90) or extra_pct not in (10, 20): raise ValueError()
+    except (KeyError, ValueError, TypeError): errors.append('Setup: camera settings are incomplete or contain an invalid storage period/extra percentage.')
     if errors: return None, errors
     fp = survey.get('floor_plan'); fpp = None
     if fp and fp.get('flat'): fpp = os.path.join(tmp, 'floorplan.jpg'); data_url_to_file(fp['flat'], fpp)
@@ -73,19 +75,20 @@ def build(survey, tmp, ref):
         'facility': {'name': fac['name'], 'location': fac['location'], 'category': fac.get('category', ''), 'type': fac.get('type', 'as_build')},
         'client': {k: g('client', k) for k in ('name', 'mobile', 'designation', 'email')},
         'contractor': {k: g('contractor', k) for k in ('company', 'name', 'mobile', 'designation', 'email', 'certified_engineer', 'certified_technician')},
-        'config': cfg, 'storage_constants': {'events_per_day': events_per_day},
+        'config': cfg, 'storage_constants': {'events_per_day': events_per_day, 'event_days': event_days, 'extra_pct': extra_pct},
         'vendor': survey.get('vendor', 'DAHUA'), 'cameras': cams, 'author': survey.get('author', ''),
         'nvr': [{'device_type': d.get('device_type', ''), 'model': d.get('model', ''), 'description': d.get('description', ''), 'qty': d.get('qty', 1)}
                 for d in survey.get('nvr', [])],
         'verification': {'items': ['verified'] * 4 + ['pending'] * 2, 'stamp_image': None}, 'floor_plan': fpp,
     }, []
 
-def make_docx(survey, tmp):
+def make_docx(survey, tmp, include_letterhead=True):
     ref = current_reference()
     data, errors = build(survey, tmp, ref)
     if errors: return None, errors
-    out = os.path.join(tmp, 'report.docx'); generate(TEMPLATE, data, out, tmp, ref=ref)
+    out = os.path.join(tmp, 'report.docx'); generate(TEMPLATE, data, out, tmp, ref=ref, include_letterhead=include_letterhead)
     name = re.sub(r'[^A-Za-z0-9._-]+', '_', 'POI_Survey_%s_REV%s' % (data['facility']['name'], data['report']['revision'])).strip('_')
+    if not include_letterhead: name += '_No_Letterhead'
     return (out, name), []
 
 @app.get('/')
@@ -135,7 +138,8 @@ def caps(): return jsonify(preview=bool(SOFFICE))
 def report():
     tmp = tempfile.mkdtemp()
     try:
-        res, errors = make_docx(request.get_json(force=True), tmp)
+        include_letterhead = request.args.get('letterhead', '1') != '0'
+        res, errors = make_docx(request.get_json(force=True), tmp, include_letterhead)
         if errors: return jsonify(errors=errors), 400
         out, name = res; buf = io.BytesIO(open(out, 'rb').read())
     except Exception as e:
@@ -149,7 +153,8 @@ def preview():
     if not SOFFICE: return jsonify(errors=['Preview needs LibreOffice installed on this computer.']), 501
     tmp = tempfile.mkdtemp()
     try:
-        res, errors = make_docx(request.get_json(force=True), tmp)
+        include_letterhead = request.args.get('letterhead', '1') != '0'
+        res, errors = make_docx(request.get_json(force=True), tmp, include_letterhead)
         if errors: return jsonify(errors=errors), 400
         subprocess.run([SOFFICE, '--headless', '--convert-to', 'pdf', '--outdir', tmp, res[0]], check=True, capture_output=True, timeout=120)
         buf = io.BytesIO(open(os.path.join(tmp, 'report.pdf'), 'rb').read())

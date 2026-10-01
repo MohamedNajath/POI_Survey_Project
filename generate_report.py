@@ -133,7 +133,7 @@ def loop_row(tbl_root, token):
         if token in ''.join(tr.itertext()): return tr
 
 # ---------------------------------------------------------------- main
-def generate(template, data, out, base_dir='.', ref=None):
+def generate(template, data, out, base_dir='.', ref=None, include_letterhead=True):
     ref = ref or load_reference(base_dir)
     calc_errors = []
     for i, c in enumerate(data['cameras'], 1):
@@ -146,6 +146,19 @@ def generate(template, data, out, base_dir='.', ref=None):
     dp = os.path.join(tmp, 'word/document.xml'); hp = os.path.join(tmp, 'word/header1.xml')
     rp = os.path.join(tmp, 'word/_rels/document.xml.rels')
     doc, hdr, rels = etree.parse(dp), etree.parse(hp), etree.parse(rp); root = doc.getroot(); body = root.find(W('body'))
+    if not include_letterhead:
+        masthead = next((part for part in hdr.getroot() if 'General Directorate of' in ''.join(part.itertext())), None)
+        if masthead is not None: masthead.getparent().remove(masthead)
+        footer_path = os.path.join(tmp, 'word/footer2.xml')
+        footer = etree.parse(footer_path).getroot()
+        for paragraph in list(footer.iter(W('p'))):
+            text = ptext(paragraph)
+            if '2343999' in text or 'secsd@moi.gov.qa' in text:
+                paragraph.getparent().remove(paragraph)
+            else:
+                for drawing in list(paragraph.iter(W('drawing'))):
+                    drawing.getparent().remove(drawing)
+        etree.ElementTree(footer).write(footer_path, xml_declaration=True, encoding='UTF-8', standalone=True)
     media = Media(tmp, rels); P = lambda s: os.path.join(base_dir, s)
     cams, fac, cl, co, cfg = data['cameras'], data['facility'], data['client'], data['contractor'], data['config']
     n = sum(int(c.get('qty', 1)) for c in cams)          # total = sum of quantities, never typed by hand
@@ -264,6 +277,10 @@ def generate(template, data, out, base_dir='.', ref=None):
          'ENCODING': cfg['encoding'], 'RESOLUTION': cfg['resolution'], 'FPS': cfg['fps'], 'BITRATE_KBPS': cfg['bitrate_kbps'],
          'WDR_DAY': cfg['wdr_day'], 'WDR_NIGHT': cfg['wdr_night'], 'TOTAL_CAMERAS': n, 'CAMERA_VENDOR': data['vendor']}
     m.update(storage(cfg, n, data.get('storage_constants')))
+    event_days = int((data.get('storage_constants') or {}).get('event_days', 90))
+    for text in root.iter(W('t')):
+        if text.text and '90 Days' in text.text:
+            text.text = text.text.replace('90 Days', '%d Days' % event_days)
     facility_token = next((t for t in root.iter(W('t')) if t.text and '{{FACILITY_NAME}}' in t.text), None)
     if facility_token is not None:
         paragraph = next(facility_token.iterancestors(W('p')))
