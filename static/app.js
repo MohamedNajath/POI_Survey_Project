@@ -281,8 +281,14 @@ function paintScene(ctx, img, fit, objs, selId, stickerImages) {
   if (img && img.width) { const k = (fit === 'contain' ? Math.min : Math.max)(CW / img.width, CH / img.height), w = img.width * k, h = img.height * k;
     ctx.drawImage(img, (CW - w) / 2, (CH - h) / 2, w, h); }
   objs.forEach(o => drawObj(ctx, o, stickerImages)); const so = objs.find(o => o.id === selId);
-  if (so) { const b = bbox(ctx, so); ctx.save(); ctx.setLineDash([14, 10]); ctx.lineWidth = 4; ctx.strokeStyle = '#1a73e8'; ctx.strokeRect(b.x - 8, b.y - 8, b.w + 16, b.h + 16);
-    if (so.type === 'sticker') { ctx.setLineDash([]); ctx.fillStyle = '#1a73e8'; [[b.x, b.y], [b.x + b.w, b.y + b.h]].forEach(([x, y]) => ctx.fillRect(x - 14, y - 14, 28, 28)); }
+  if (so) { ctx.save(); ctx.setLineJoin('round');
+    if (so.type === 'sticker') {
+      const corners = stickerCorners(so);
+      ctx.beginPath(); corners.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath();
+      ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.lineWidth = 12; ctx.stroke();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 5; ctx.stroke();
+      corners.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, 22, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 5; ctx.strokeStyle = '#333'; ctx.stroke(); });
+    } else { const b = bbox(ctx, so); ctx.setLineDash([14, 10]); ctx.lineWidth = 4; ctx.strokeStyle = '#fff'; ctx.strokeRect(b.x - 8, b.y - 8, b.w + 16, b.h + 16); }
     ctx.restore(); }
 }
 function drawObj(ctx, o, stickerImages = {}) {
@@ -336,9 +342,22 @@ function hit(ctx, objs, p) {
     if (p.x >= b.x - pad && p.x <= b.x + b.w + pad && p.y >= b.y - pad && p.y <= b.y + b.h + pad) return o; }
   return null;
 }
-function stickerHandle(ctx, o, p) {
-  if (!o || o.type !== 'sticker') return false;
-  const b = bbox(ctx, o); return Math.hypot(p.x - (b.x + b.w), p.y - (b.y + b.h)) <= 34;
+function stickerCorners(o) {
+  const cx = o.x + o.w / 2, cy = o.y + o.h / 2, a = (o.a || 0) * Math.PI / 180;
+  const cos = Math.cos(a), sin = Math.sin(a);
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => ({
+    x: cx + x * o.w / 2 * cos - y * o.h / 2 * sin,
+    y: cy + x * o.w / 2 * sin + y * o.h / 2 * cos
+  }));
+}
+function stickerHandle(o, p) {
+  if (!o || o.type !== 'sticker') return -1;
+  const corners = stickerCorners(o);
+  const nearest = corners.reduce((best, point, index) => {
+    const distance = Math.hypot(p.x - point.x, p.y - point.y);
+    return distance < best.distance ? { index, distance } : best;
+  }, { index: -1, distance: Infinity });
+  return nearest.distance <= 100 ? nearest.index : -1;
 }
 function moveObj(o, dx, dy) { if (o.type === 'arrow') { o.x1 += dx; o.y1 += dy; o.x2 += dx; o.y2 += dy; } else { o.x += dx; o.y += dy; } }
 
@@ -395,7 +414,15 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       const p = pt(e);
       if (cur === 'select') {
         const selected = objs.find(o => o.id === sel);
-        if (stickerHandle(ctx, selected, p)) drag = { mode: 'resize', o: selected };
+        let resize = selected ? { o: selected, handle: stickerHandle(selected, p) } : null;
+        if (!resize || resize.handle < 0) {
+          for (let index = objs.length - 1; index >= 0; index--) {
+            const candidate = objs[index], handle = stickerHandle(candidate, p);
+            if (handle >= 0) { resize = { o: candidate, handle }; break; }
+          }
+        }
+        if (resize && resize.handle >= 0) { const o = resize.o, center = { x: o.x + o.w / 2, y: o.y + o.h / 2 }, corner = stickerCorners(o)[resize.handle];
+          sel = o.id; drag = { mode: 'scale', o, center, w: o.w, h: o.h, distance: Math.max(1, Math.hypot(corner.x - center.x, corner.y - center.y)) }; }
         else { const o = hit(ctx, objs, p); sel = o ? o.id : null; drag = o ? { mode: 'move', last: p, moved: false, o } : null; }
       }
       else if (cur === 'camera') { const o = { id: uid(), type: 'camera', x: p.x, y: p.y, s: 120, a: 0 }; objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
@@ -427,13 +454,17 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
         return;
       }
       if (!drag) return; const p = pt(e);
-      if (drag.mode === 'resize') { const o = drag.o; const nw = Math.max(40, p.x - o.x), nh = Math.max(30, p.y - o.y); o.w = nw; o.h = nh; redraw(); return; }
+      if (drag.mode === 'scale') { const o = drag.o, angle = (o.a || 0) * Math.PI / 180, dx = p.x - drag.center.x, dy = p.y - drag.center.y;
+        const localX = dx * Math.cos(angle) + dy * Math.sin(angle), localY = -dx * Math.sin(angle) + dy * Math.cos(angle);
+        const scale = Math.max(.2, Math.min(5, Math.hypot(localX, localY) / drag.distance));
+        o.w = Math.max(40, drag.w * scale); o.h = Math.max(30, drag.h * scale);
+        o.x = drag.center.x - o.w / 2; o.y = drag.center.y - o.h / 2; redraw(); return; }
       if (drag.mode === 'move') { moveObj(drag.o, p.x - drag.last.x, p.y - drag.last.y); drag.last = p; drag.moved = true; }
       else { const o = drag.o; if (o.type === 'arrow') { o.x2 = p.x; o.y2 = p.y; } else { o.x = Math.min(drag.s.x, p.x); o.y = Math.min(drag.s.y, p.y); o.w = Math.abs(p.x - drag.s.x); o.h = Math.abs(p.y - drag.s.y); } }
       redraw(); });
     const end = () => { if (!drag) return;
       if (drag.mode === 'move') { if (drag.moved) commit(); }
-      else if (drag.mode === 'resize') commit();
+      else if (drag.mode === 'scale') commit();
       else { const o = drag.o, tiny = o.type === 'arrow' ? Math.hypot(o.x2 - o.x1, o.y2 - o.y1) < 30 : (o.w < 30 || o.h < 30);
         if (tiny) objs.pop(); else { sel = o.id; commit(); } cur = 'select'; }
       drag = null; redraw(); };
