@@ -215,10 +215,28 @@ def generate(template, data, out, base_dir='.', ref=None):
     for i, c in enumerate(cams):
         if not c.get('photo_page', True):
             continue
-        m = {'SEC_PREFIX': '05: ' if i == 0 else '', 'LOCATION_NAME': c['location_name'], 'HEIGHT': c['height_m'],
+        location_name = str(c['location_name'])
+        display_location = location_name[:1].upper() + location_name[1:]
+        m = {'SEC_PREFIX': '05: ' if i == 0 else '', 'LOCATION_NAME': display_location, 'HEIGHT': c['height_m'],
              'DISTANCE': c['distance_m'], 'INSTALL_TYPE': c['install_type']}
         for b in block:
-            nb = copy.deepcopy(b); fill(nb, m)
+            nb = copy.deepcopy(b)
+            for paragraph in nb.iter(W('p')):
+                if 'Location Image Reference:' in ptext(paragraph):
+                    value_run = next((run for run in paragraph.iter(W('r')) if any(t.text and '{{LOCATION_NAME}}' in t.text for t in run.iter(W('t')))), None)
+                    if value_run is not None:
+                        break_run = etree.Element(W('r'))
+                        etree.SubElement(break_run, W('br'))
+                        value_run.addprevious(break_run)
+                if ptext(paragraph).startswith('Location: {{LOCATION_NAME}}'):
+                    for run in paragraph.iter(W('r')):
+                        rpr = run.find(W('rPr'))
+                        if rpr is None: rpr = etree.Element(W('rPr')); run.insert(0, rpr)
+                        for tag in ('b', 'bCs'):
+                            bold = rpr.find(W(tag))
+                            if bold is None: bold = etree.SubElement(rpr, W(tag))
+                            bold.set(W('val'), '1')
+            fill(nb, m)
             for tok, key, alt in (('{{IMG_TARGET}}', 'photo_target', 'Target area'), ('{{IMG_CAMERA}}', 'photo_camera', 'Camera location')):
                 d = find_docpr(nb, tok)
                 if d is not None: swap_picture(d, media, P(c[key]), '%s – %s' % (alt, c['location_name']))
@@ -246,6 +264,21 @@ def generate(template, data, out, base_dir='.', ref=None):
          'ENCODING': cfg['encoding'], 'RESOLUTION': cfg['resolution'], 'FPS': cfg['fps'], 'BITRATE_KBPS': cfg['bitrate_kbps'],
          'WDR_DAY': cfg['wdr_day'], 'WDR_NIGHT': cfg['wdr_night'], 'TOTAL_CAMERAS': n, 'CAMERA_VENDOR': data['vendor']}
     m.update(storage(cfg, n, data.get('storage_constants')))
+    facility_token = next((t for t in root.iter(W('t')) if t.text and '{{FACILITY_NAME}}' in t.text), None)
+    if facility_token is not None:
+        paragraph = next(facility_token.iterancestors(W('p')))
+        ppr = paragraph.find(W('pPr'))
+        if ppr is None: ppr = etree.Element(W('pPr')); paragraph.insert(0, ppr)
+        alignment = ppr.find(W('jc'))
+        if alignment is None: alignment = etree.SubElement(ppr, W('jc'))
+        alignment.set(W('val'), 'center')
+        run = next(facility_token.iterancestors(W('r')))
+        rpr = run.find(W('rPr'))
+        if rpr is None: rpr = etree.Element(W('rPr')); run.insert(0, rpr)
+        for tag in ('b', 'bCs'):
+            bold = rpr.find(W(tag))
+            if bold is None: bold = etree.SubElement(rpr, W(tag))
+            bold.set(W('val'), '1')
     fill(root, m)
     left = [t.text for t in root.iter(W('t')) if t.text and '{{' in t.text]; assert not left, left
 
