@@ -262,8 +262,8 @@ async function editPhoto(p, title, hint, assign) {
 
 /* ============ annotation editor ============ */
 const CW = 1600, CH = 1200;
-const STICKER_DEFAULT_W = 320, STICKER_DEFAULT_H = 200;
-const STICKER_ASPECT = 16 / 10;
+const STICKER_DEFAULT_W = 224, STICKER_DEFAULT_H = 640;
+const STICKER_ASPECT = 70 / 200;
 const STICKERS = {
   wall_mount: { label: 'Wall Mount', file: 'Wall Mount.png' },
   thin_pole: { label: 'Thin Pole', file: 'Thin Pole.png' },
