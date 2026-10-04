@@ -276,8 +276,7 @@ async function editPhoto(p, title, hint, assign) {
 
 /* ============ annotation editor ============ */
 const CW = 1600, CH = 1200;
-const STICKER_DEFAULT_W = 576, STICKER_DEFAULT_H = 640;
-const STICKER_ASPECT = 180 / 200;
+const STICKER_DEFAULT_W = 576;
 const STICKERS = {
   target_area: { label: 'Target Area', file: 'Target Area.png' },
   wall_mount: { label: 'Wall Mount', file: 'Wall Mount.png' },
@@ -292,6 +291,7 @@ const STICKERS = {
   outline: { label: 'Outline', file: 'Outline.png' }
 };
 function paintScene(ctx, img, fit, objs, selId, stickerImages) {
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.clearRect(0, 0, CW, CH); ctx.fillStyle = fit === 'contain' ? '#1a1a1a' : '#000'; ctx.fillRect(0, 0, CW, CH);
   if (img && img.width) { const k = (fit === 'contain' ? Math.min : Math.max)(CW / img.width, CH / img.height), w = img.width * k, h = img.height * k;
     ctx.drawImage(img, (CW - w) / 2, (CH - h) / 2, w, h); }
@@ -371,14 +371,14 @@ function stickerCorners(o) {
     y: cy + x * o.w / 2 * sin + y * o.h / 2 * cos
   }));
 }
-function stickerHandle(o, p) {
+function stickerHandle(o, p, radius) {
   if (!o || o.type !== 'sticker') return -1;
   const corners = stickerCorners(o);
   const nearest = corners.reduce((best, point, index) => {
     const distance = Math.hypot(p.x - point.x, p.y - point.y);
     return distance < best.distance ? { index, distance } : best;
   }, { index: -1, distance: Infinity });
-  return nearest.distance <= 100 ? nearest.index : -1;
+  return nearest.distance <= radius ? nearest.index : -1;
 }
 function moveObj(o, dx, dy) { if (o.type === 'arrow') { o.x1 += dx; o.y1 += dy; o.x2 += dx; o.y2 += dy; } else { o.x += dx; o.y += dy; } }
 
@@ -403,14 +403,30 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       const so = objs.find(o => o.id === sel); $('#ed-rot', ov).disabled = !(so && so.type === 'sticker');
       $('#ed-fit', ov).textContent = fit === 'cover' ? 'Fill frame' : 'Whole photo'; };
     Object.entries(STICKERS).forEach(([key, sticker]) => {
-      const image = new Image(); image.onload = redraw; image.src = `stickers/${encodeURIComponent(sticker.file)}`; stickerImages[key] = image;
+      const image = new Image(); image.onload = () => {
+        objs.forEach(o => { if (o.type === 'sticker' && o.sticker === key) normalizeSticker(o); });
+        redraw();
+      };
+      image.src = `stickers/${encodeURIComponent(sticker.file)}`; stickerImages[key] = image;
     });
     const stickersReady = () => Promise.all(Object.values(stickerImages).map(image => image.complete ? Promise.resolve() : new Promise(resolve => {
-      image.onload = resolve; image.onerror = resolve;
+      image.addEventListener('load', resolve, { once: true });
+      image.addEventListener('error', resolve, { once: true });
     })));
     const commit = () => { hist = hist.slice(0, hi + 1); hist.push(JSON.stringify(objs)); hi = hist.length - 1; };
     const photoReady = new Promise(resolve => { img.onload = () => { redraw(); resolve(); }; img.onerror = resolve; });
     const pt = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * CW / r.width, y: (e.clientY - r.top) * CH / r.height }; };
+    const stickerAspect = sticker => {
+      const image = stickerImages[sticker];
+      return image?.naturalWidth && image?.naturalHeight ? image.naturalWidth / image.naturalHeight : 1;
+    };
+    const normalizeSticker = sticker => {
+      if (sticker.type !== 'sticker') return;
+      const aspect = stickerAspect(sticker.sticker), centerY = sticker.y + sticker.h / 2;
+      sticker.h = sticker.w / aspect;
+      sticker.y = centerY - sticker.h / 2;
+    };
+    const handleRadius = () => 14 * CW / cv.getBoundingClientRect().width;
     const midpoint = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
     img.src = src;
     cv.addEventListener('pointerdown', e => {
@@ -424,8 +440,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
             startAngle: Math.atan2(values[1].y - values[0].y, values[1].x - values[0].x),
             startCenter: midpoint(values[0], values[1]),
             startRect: { x: sticker.x, y: sticker.y, w: sticker.w, h: sticker.h },
-            angle: sticker.a || 0,
-            lastCenter: midpoint(values[0], values[1])
+            angle: sticker.a || 0
           };
           drag = null; e.preventDefault(); return;
         }
@@ -434,19 +449,22 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       const p = pt(e);
       if (cur === 'select') {
         const selected = objs.find(o => o.id === sel);
-        let resize = selected ? { o: selected, handle: stickerHandle(selected, p) } : null;
+        let resize = selected ? { o: selected, handle: stickerHandle(selected, p, handleRadius()) } : null;
         if (!resize || resize.handle < 0) {
           for (let index = objs.length - 1; index >= 0; index--) {
-            const candidate = objs[index], handle = stickerHandle(candidate, p);
+            const candidate = objs[index], handle = stickerHandle(candidate, p, handleRadius());
             if (handle >= 0) { resize = { o: candidate, handle }; break; }
           }
         }
-        if (resize && resize.handle >= 0) { const o = resize.o, center = { x: o.x + o.w / 2, y: o.y + o.h / 2 }, corner = stickerCorners(o)[resize.handle];
-          sel = o.id; drag = { mode: 'scale', o, center, w: o.w, h: o.h, distance: Math.max(1, Math.hypot(corner.x - center.x, corner.y - center.y)) }; }
+        if (resize && resize.handle >= 0) { const o = resize.o; normalizeSticker(o);
+          const center = { x: o.x + o.w / 2, y: o.y + o.h / 2 };
+          sel = o.id; drag = { mode: 'scale', o, center, w: o.w, distance: Math.max(1, Math.hypot(p.x - center.x, p.y - center.y)) }; }
         else { const o = hit(ctx, objs, p); sel = o ? o.id : null; drag = o ? { mode: 'move', last: p, moved: false, o } : null; }
       }
       else if (cur === 'camera') { const o = { id: uid(), type: 'camera', x: p.x, y: p.y, s: 120, a: 0 }; objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
-      else if (cur.startsWith('sticker:')) { const o = { id: uid(), type: 'sticker', sticker: cur.slice(8), x: p.x - STICKER_DEFAULT_W / 2, y: p.y - STICKER_DEFAULT_H / 2, w: STICKER_DEFAULT_W, h: STICKER_DEFAULT_H, a: 0 }; objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
+      else if (cur.startsWith('sticker:')) { const sticker = cur.slice(8), h = STICKER_DEFAULT_W / stickerAspect(sticker);
+        const o = { id: uid(), type: 'sticker', sticker, x: p.x - STICKER_DEFAULT_W / 2, y: p.y - h / 2, w: STICKER_DEFAULT_W, h, a: 0 };
+        objs.push(o); sel = o.id; commit(); cur = 'select'; drag = null; }
       else if (cur === 'text') { const t = prompt('Label text'); if (t && t.trim()) { const o = { id: uid(), type: 'text', x: p.x, y: p.y, text: t.trim() }; objs.push(o); sel = o.id; commit(); } cur = 'select'; }
       else { const o = cur === 'arrow' ? { id: uid(), type: 'arrow', x1: p.x, y1: p.y, x2: p.x, y2: p.y } : { id: uid(), type: cur, x: p.x, y: p.y, w: 0, h: 0 };
         objs.push(o); sel = null; drag = { mode: 'draw', o, s: p }; }
@@ -460,16 +478,16 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
         const angle = Math.atan2(values[1].y - values[0].y, values[1].x - values[0].x);
         const center = midpoint(values[0], values[1]);
         const scale = Math.max(.35, Math.min(6, distance / pinch.startDistance));
-        const nw = Math.max(40, pinch.startRect.w * scale), nh = nw / STICKER_ASPECT;
-        const prevCenter = pinch.lastCenter || pinch.startCenter;
-        const dx = center.x - prevCenter.x, dy = center.y - prevCenter.y;
-        const centerX = pinch.startRect.x + pinch.startRect.w / 2 + dx;
-        const centerY = pinch.startRect.y + pinch.startRect.h / 2 + dy;
+        const nw = Math.max(40, pinch.startRect.w * scale), nh = nw / stickerAspect(o.sticker);
+        const centerX = pinch.startRect.x + pinch.startRect.w / 2 + center.x - pinch.startCenter.x;
+        const centerY = pinch.startRect.y + pinch.startRect.h / 2 + center.y - pinch.startCenter.y;
         o.x = centerX - nw / 2;
         o.y = centerY - nh / 2;
         o.w = nw; o.h = nh;
-        o.a = pinch.angle + (angle - pinch.startAngle) * 180 / Math.PI;
-        pinch.lastCenter = center;
+        let angleDelta = angle - pinch.startAngle;
+        if (angleDelta > Math.PI) angleDelta -= Math.PI * 2;
+        else if (angleDelta < -Math.PI) angleDelta += Math.PI * 2;
+        o.a = pinch.angle + angleDelta * 180 / Math.PI;
         redraw(); e.preventDefault();
         return;
       }
@@ -477,7 +495,7 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       if (drag.mode === 'scale') { const o = drag.o, angle = (o.a || 0) * Math.PI / 180, dx = p.x - drag.center.x, dy = p.y - drag.center.y;
         const localX = dx * Math.cos(angle) + dy * Math.sin(angle), localY = -dx * Math.sin(angle) + dy * Math.cos(angle);
         const scale = Math.max(.2, Math.min(5, Math.hypot(localX, localY) / drag.distance));
-        o.w = Math.max(40, drag.w * scale); o.h = o.w / STICKER_ASPECT;
+        o.w = Math.max(40, drag.w * scale); o.h = o.w / stickerAspect(o.sticker);
         o.x = drag.center.x - o.w / 2; o.y = drag.center.y - o.h / 2; redraw(); return; }
       if (drag.mode === 'move') { moveObj(drag.o, p.x - drag.last.x, p.y - drag.last.y); drag.last = p; drag.moved = true; }
       else { const o = drag.o; if (o.type === 'arrow') { o.x2 = p.x; o.y2 = p.y; } else { o.x = Math.min(drag.s.x, p.x); o.y = Math.min(drag.s.y, p.y); o.w = Math.abs(p.x - drag.s.x); o.h = Math.abs(p.y - drag.s.y); } }
@@ -488,8 +506,20 @@ function openEditor({ title, hint, src, ann, tool = 'select' }) {
       else { const o = drag.o, tiny = o.type === 'arrow' ? Math.hypot(o.x2 - o.x1, o.y2 - o.y1) < 30 : (o.w < 30 || o.h < 30);
         if (tiny) objs.pop(); else { sel = o.id; commit(); } cur = 'select'; }
       drag = null; redraw(); };
-    cv.addEventListener('pointerup', e => { pointers.delete(e.pointerId); if (pointers.size < 2 && pinch) { commit(); pinch = null; } end(); });
-    cv.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinch = null; end(); });
+    const releasePointer = e => {
+      pointers.delete(e.pointerId);
+      if (pinch && pointers.size < 2) {
+        const sticker = objs.find(o => o.id === sel);
+        commit(); pinch = null;
+        const remaining = pointers.values().next().value;
+        drag = remaining && sticker?.type === 'sticker' ? { mode: 'move', o: sticker, last: remaining, moved: false } : null;
+        redraw();
+        return;
+      }
+      end();
+    };
+    cv.addEventListener('pointerup', releasePointer);
+    cv.addEventListener('pointercancel', releasePointer);
     ov.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => { cur = b.dataset.tool; redraw(); });
     $('#ed-rot', ov).onclick = () => { const o = objs.find(x => x.id === sel); if (o) { o.a = ((o.a || 0) + 30) % 360; commit(); redraw(); } };
     $('#ed-del', ov).onclick = () => {
