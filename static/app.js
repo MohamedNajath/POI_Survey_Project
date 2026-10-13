@@ -12,13 +12,27 @@ function set(o, path, v) { const ks = path.split('.'); const last = ks.pop(); co
 /* ============ drafts in IndexedDB (photos included) ============ */
 const idb = {
   db: null,
-  open() { return new Promise((res, rej) => { const r = indexedDB.open('poi-survey', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('surveys', { keyPath: 'id' });
-    r.onsuccess = () => { this.db = r.result; res(); }; r.onerror = () => rej(r.error); }); },
+  open() { return new Promise((res, rej) => { const r = indexedDB.open('poi-survey');
+    r.onupgradeneeded = () => {
+      if (!r.result.objectStoreNames.contains('surveys')) r.result.createObjectStore('surveys', { keyPath: 'id' });
+    };
+    r.onsuccess = () => { this.db = r.result; this.db.onversionchange = () => this.db.close(); res(); }; r.onerror = () => rej(r.error); }); },
   tx(mode) { return this.db.transaction('surveys', mode).objectStore('surveys'); },
   put(s) { return new Promise((res, rej) => { const q = this.tx('readwrite').put(s); q.onsuccess = res; q.onerror = () => rej(q.error); }); },
   all() { return new Promise((res, rej) => { const q = this.tx('readonly').getAll(); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
   del(id) { return new Promise((res, rej) => { const q = this.tx('readwrite').delete(id); q.onsuccess = res; q.onerror = () => rej(q.error); }); },
+  putReport(report) {
+    const reports = this.allReports();
+    reports.push(report);
+    localStorage.setItem('poi-survey-reports', JSON.stringify(reports));
+  },
+  allReports() {
+    const saved = localStorage.getItem('poi-survey-reports');
+    if (!saved) return [];
+    const reports = JSON.parse(saved);
+    if (!Array.isArray(reports)) throw new Error('Saved report history is not a list.');
+    return reports;
+  },
 };
 
 /* ============ state ============ */
@@ -96,10 +110,21 @@ const installationTypeSelect = (c, i) => {
 function render() { view === 'home' ? renderHome() : renderSurvey(); }
 
 async function renderHome() {
-  const list = (await idb.all()).sort((a, b) => b.updated - a.updated);
+  const list = await idb.all();
+  let reports = [], reportHistoryError = '';
+  try { reports = idb.allReports(); }
+  catch (e) { reportHistoryError = 'Report history could not be loaded from this browser.'; }
+  list.sort((a, b) => b.updated - a.updated);
+  reports.sort((a, b) => b.generatedAt - a.generatedAt);
   $('#app').innerHTML = `<div class="top"><h1>POI surveys</h1></div><main>
     <button class="btn primary" style="width:100%" data-act="new">MOI New Survey</button>
     <button class="btn" style="width:100%;margin-top:8px" data-act="newNoLetterhead">Generate report without letterhead</button>
+    ${reportHistoryError ? `<div class="card issues" role="alert">${reportHistoryError}</div>` : ''}
+    <h2>Generated reports · ${reports.length}</h2>
+    ${reports.length ? `<div class="card">${reports.map(r => `<div class="list-item"><div class="grow">
+      <div class="t">${esc(r.facility || 'Untitled survey')}</div>
+      <div class="s">Generated ${esc(new Date(r.generatedAt).toLocaleString())}${r.reportNumber ? ` · Report ${esc(r.reportNumber)}` : ''}</div>
+      </div></div>`).join('')}</div>` : '<div class="empty">No reports generated yet.</div>'}
     <h2>Drafts</h2>
     ${list.length ? `<div class="card">${list.map(s => `<div class="list-item"><div class="grow" data-act="open" data-id="${s.id}" style="cursor:pointer">
       <div class="t">${esc(s.facility.name || 'Untitled survey')}</div>
@@ -240,12 +265,16 @@ async function generate(includeLetterhead = S.include_letterhead !== false) {
       <div class="row end" style="margin-top:12px"><button class="btn primary" data-act="closeOv">Back to survey</button></div>`); }
     const blob = await r.blob(); if (lastUrl) URL.revokeObjectURL(lastUrl); lastUrl = URL.createObjectURL(blob);
     const name = (r.headers.get('Content-Disposition') || '').match(/filename\*?=(?:UTF-8'')?"?([^";]+)/)?.[1] || 'POI_Survey_Report.docx';
-    overlay(`<h3>Report generated successfully</h3><p style="margin:0 0 12px;color:var(--mute)">${esc(name)}</p>
+    let historyWarning = '';
+    try { await idb.putReport({ id: uid(), generatedAt: Date.now(), facility: S.facility.name, reportNumber: S.report.number }); }
+    catch (e) { historyWarning = '<p class="issues">The report was generated, but it could not be added to the home-page report history.</p>'; }
+    overlay(`<h3>Report generated successfully</h3><p style="margin:0 0 12px;color:var(--mute)">${esc(name)}</p>${historyWarning}
       <div class="row" style="flex-direction:column;align-items:stretch">
       <a class="btn primary" href="${lastUrl}" download="${esc(decodeURIComponent(name))}">Download Word report</a>
       ${CAPS.preview ? '<button class="btn" data-act="preview">Preview report</button>' : ''}
       <button class="btn" data-act="generateAgain">Generate again</button>
       <button class="btn olive" data-act="newAfterReport">New report</button>
+      <button class="btn" data-act="home">Return to home page</button>
       <button class="btn" data-act="closeOv">Edit survey</button></div>`);
   } catch (e) { overlay(`<h3>Report not generated</h3><p>Could not reach the app server. Check that it is still running.</p><div class="row end"><button class="btn primary" data-act="closeOv">Close</button></div>`); }
 }
@@ -591,7 +620,7 @@ document.addEventListener('click', async e => {
     view = 'survey'; step = 0; render();
   }
   else if (a === 'delete') { if (confirm('Delete this draft and its photos?')) { await idb.del(el.dataset.id); render(); } }
-  else if (a === 'home') { clearTimeout(saveTimer); if (S) { S.updated = Date.now(); await idb.put(S); } S = null; view = 'home'; render(); }
+  else if (a === 'home') { closeOverlay(); clearTimeout(saveTimer); if (S) { S.updated = Date.now(); await idb.put(S); } S = null; view = 'home'; render(); }
   else if (a === 'step') { step = +el.dataset.n; closeOverlay(); render(); window.scrollTo(0, 0); }
   else if (a === 'setType') { S.facility.type = el.dataset.v; scheduleSave(); render(); }
   else if (a === 'addCam') { S.cameras.push(newCamera()); scheduleSave(); render(); }
@@ -654,7 +683,11 @@ document.addEventListener('click', async e => {
 });
 
 (async function init() {
-  await idb.open();
-  [CAT, CAPS] = await Promise.all([fetch('/api/catalog').then(r => r.json()), fetch('/api/capabilities').then(r => r.json()).catch(() => ({}))]);
-  render();
+  try {
+    await idb.open();
+    [CAT, CAPS] = await Promise.all([fetch('/api/catalog').then(r => r.json()), fetch('/api/capabilities').then(r => r.json()).catch(() => ({}))]);
+    render();
+  } catch (e) {
+    $('#app').innerHTML = `<main><div class="card"><h2>POI surveys could not start</h2><p>${esc(e.message || 'Check that browser storage is available, then reload the page.')}</p><button class="btn primary" onclick="location.reload()">Reload application</button></div></main>`;
+  }
 })();
