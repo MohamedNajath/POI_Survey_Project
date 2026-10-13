@@ -16,7 +16,7 @@ def _num(x):
 def round_distance(d, mode):
     if mode == 'floor': return math.floor(d + EPS)
     if mode == 'nearest': return math.floor(d + 0.5 + EPS)
-    return math.ceil(d - EPS)                       # 'ceil' (default): never under-estimate the mounting height
+    return math.ceil(d - EPS)                       # 'ceil'
 
 def sorted_ranges(ref): return sorted(ref['lens_ranges'], key=lambda r: r['min'])
 

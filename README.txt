@@ -12,6 +12,8 @@ What's new in this version
   ("06: POI Camera Installation Table (Reference)"), colour-coded the same way as the source table.
 - A distance outside the table (e.g. 333 m) is rejected with a clear message – the app never guesses
   a height or lens for it, on screen or in the report.
+- Fractional distances use the lower whole-metre row in the shipped height schedule (for example,
+  6.8 m uses the 6 m row, which includes a 2.2 m height).
 - "POI reference table (admin)" on the home screen lets you edit the table (heights, lens ranges,
   camera/vendor/install-type lists) as JSON. It's checked for overlaps, gaps and missing cells before
   saving, and reports use whatever table is saved at the time of generation.

@@ -10,7 +10,7 @@ ref = {
  "angles": [6, 7, 8], "default_angle": 6,
  "height_table": [{"distance": d, "height": {"6": a, "7": b, "8": c}} for d, a, b, c in ROWS],
  "lens_ranges": [{"min": 1.3, "max": 3.1, "lens": "PLZ20C0-D"}, {"min": 3.2, "max": 8.9, "lens": "PLZ21C0-D"}, {"min": 9, "max": 25, "lens": "PFL1575-A-12D"}],
- "rules": {"fractional_distance": "ceil"},
+ "rules": {"fractional_distance": "floor"},
  "poi_table_footnote": "The average eye level height of a standing person is 160 cm",
  "report_options": {"include_poi_table": False},
  "camera_models": ["IPC-HF7442F-Z-X"],
