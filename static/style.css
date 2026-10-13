@@ -1,6 +1,6 @@
 :root{
   --maroon:#89143C; --maroon-d:#6b0f2f; --olive:#666633; --olive-l:#e9e9dc;
-  --ink:#1d1b1c; --mute:#67656a; --line:#d8d6d6; --bg:#ebebe8; --card:#fff; --err:#b3261e; --ok:#2e6b34;
+  --ink:#1d1b1c; --mute:#67656a; --line:#d8d6d6; --bg:#ebebe8; --card:#fff; --err:#b3261e; --ruby:#9b111e; --ok:#2e6b34;
   --r:10px; --tap:48px;
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
 }
@@ -22,6 +22,11 @@ h2{font-size:1.15rem;margin:18px 4px 8px}
 @media(max-width:420px){.grid{grid-template-columns:1fr}}
 .f{display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:var(--mute)}
 .f input,.f select,.f textarea{border:1px solid #bdbbbb;border-radius:8px;padding:0 10px;min-height:var(--tap);background:#fff;color:var(--ink);font-size:1rem}
+.installation-type.required-field{color:var(--ruby);font-weight:600}
+.installation-type.required-field select{border:2px solid var(--ruby);background:#fff2f3;color:var(--ruby)}
+.installation-type>span b{color:var(--ruby)}
+.field-error{display:none;font-size:.78rem;font-weight:600}
+.required-field .field-error{display:block}
 .f textarea{padding:10px;min-height:80px}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:var(--tap);padding:0 16px;border-radius:var(--r);
   border:1px solid var(--maroon);background:#fff;color:var(--maroon);font-weight:600;cursor:pointer;text-decoration:none}

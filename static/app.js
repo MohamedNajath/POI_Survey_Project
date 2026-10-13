@@ -26,7 +26,7 @@ let CAT = {}, CAPS = {}, S = null, view = 'home', step = 0, saveTimer = null;
 const STEPS = ['Site', 'Cameras', 'Setup', 'Review'];
 
 const newCamera = () => ({ id: uid(), location_name: '', distance_m: '', target_area_m: '', height_m: '',
-  camera_model: (CAT.camera_models || [])[0] || '', install_type: (CAT.install_types || ['Wall Mount'])[0], environment: (CAT.environments || ['Indoor'])[0], qty: 1, remarks: '',
+  camera_model: (CAT.camera_models || [])[0] || '', install_type: '', environment: (CAT.environments || ['Indoor'])[0], qty: 1, remarks: '',
   photos: { target: null, camera: null } });
 /* Height / lens are never stored on the camera – they're derived live from distance + angle via the POI reference table (rules.js),
    and recomputed again on the server from the same table when the report is generated. */
@@ -72,6 +72,7 @@ function issues() {
     if (!c.location_name.trim() || !String(c.distance_m).trim() || !String(c.target_area_m).trim())
       out.push({ t: `${n}: fill in name, distance and target area`, s: 1 });
     else { const r = poiResult(c); if (!r.ok) out.push({ t: `${n}: ${r.error}`, s: 1 }); }
+    if (!String(c.install_type || '').trim()) out.push({ t: `${n}: select an installation type`, s: 1 });
     if (!photoFor(c, 'target')) out.push({ t: `${n}: add the target area photo`, s: 1 });
     if (!photoFor(c, 'camera')) out.push({ t: `${n}: add the camera position photo`, s: 1 });
   });
@@ -83,6 +84,14 @@ const fld = (label, path, o = {}) => `<label class="f ${o.wide ? 'wide' : ''}"><
   : `<input data-bind="${path}" value="${esc(get(S, path))}" ${o.type ? `type="${o.type}"` : ''} ${o.mode ? `inputmode="${o.mode}"` : ''} ${o.list ? `list="${o.list}"` : ''} ${o.ph ? `placeholder="${o.ph}"` : ''} autocomplete="off">`}</label>`;
 const sel = (label, path, opts, o = {}) => `<label class="f ${o.wide ? 'wide' : ''}"><span>${label}</span><select data-bind="${path}">
   ${opts.map(x => `<option ${x === get(S, path) ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label>`;
+const installationTypeSelect = (c, i) => {
+  const missing = !String(c.install_type || '').trim();
+  return `<label class="f installation-type ${missing ? 'required-field' : ''}"><span>Installation type <b>*</b></span>
+    <select data-bind="cameras.${i}.install_type" id="install-type-${i}" required aria-invalid="${missing}">
+      <option value="" disabled ${missing ? 'selected' : ''}>Select installation type</option>
+      ${(CAT.install_types || []).map(x => `<option value="${esc(x)}" ${x === c.install_type ? 'selected' : ''}>${esc(x)}</option>`).join('')}
+    </select><small class="field-error" id="install-type-error-${i}">Please select an installation type.</small></label>`;
+};
 
 function render() { view === 'home' ? renderHome() : renderSurvey(); }
 
@@ -158,7 +167,7 @@ function camerasStep() {
     </div>
     <div class="wide" id="auto-${i}">${autoPanel(c)}</div>
     <div class="grid" style="margin-top:10px">
-    ${sel('Camera model', `cameras.${i}.camera_model`, CAT.camera_models || [])}${sel('Installation type', `cameras.${i}.install_type`, CAT.install_types || [])}
+    ${sel('Camera model', `cameras.${i}.camera_model`, CAT.camera_models || [])}${installationTypeSelect(c, i)}
     ${sel('Environment', `cameras.${i}.environment`, CAT.environments || [])}
     ${fld('Remarks', `cameras.${i}.remarks`, { wide: true, area: true, ph: 'Optional – not printed in the report' })}
     </div>
@@ -552,6 +561,13 @@ function refreshHeight(bindPath) {
   const field = select.closest('.f'); if (!field) return false;
   field.outerHTML = heightSelect(S.cameras[i], i); return true;
 }
+function refreshInstallationType(bindPath) {
+  const m = bindPath.match(/^cameras\.(\d+)\.install_type$/); if (!m) return;
+  const i = +m[1], select = document.getElementById('install-type-' + i); if (!select) return;
+  const missing = !String(S.cameras[i].install_type || '').trim();
+  select.closest('.f')?.classList.toggle('required-field', missing);
+  select.setAttribute('aria-invalid', String(missing));
+}
 document.addEventListener('input', e => {
   const b = e.target.dataset?.bind; if (!b || !S) return; set(S, b, e.target.value); scheduleSave();
   if (b.endsWith('.qty') && $('#totalCams')) $('#totalCams').textContent = totalCams();
@@ -559,7 +575,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', async e => {
   const t = e.target;
-  if (t.dataset?.bind && t.tagName === 'SELECT') { set(S, t.dataset.bind, t.value); scheduleSave(); refreshAuto(t.dataset.bind); return; }
+  if (t.dataset?.bind && t.tagName === 'SELECT') { set(S, t.dataset.bind, t.value); scheduleSave(); refreshAuto(t.dataset.bind); refreshInstallationType(t.dataset.bind); return; }
   if (t.dataset?.photo && t.files?.[0]) { const f = t.files[0], target = t.dataset.photo; t.value = ''; try { await addPhoto(target, f); } catch (err) { alert(err.message); } }
 });
 document.addEventListener('click', async e => {
