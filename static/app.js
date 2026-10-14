@@ -158,17 +158,17 @@ async function renderHome() {
     <button class="btn primary" style="width:100%" data-act="new">MOI New Survey</button>
     <button class="btn" style="width:100%;margin-top:8px" data-act="newNoLetterhead">Generate report without letterhead</button>
     ${reportHistoryError ? `<div class="card issues" role="alert">${reportHistoryError}</div>` : ''}
-    <div class="spread"><h2>Generated reports · ${reports.length}</h2>
+    <div class="spread"><h2>Generated reports (last 24 hours) · ${reports.length}</h2>
       ${reports.length ? `<button class="btn small danger" id="deleteReports" data-act="deleteReports" ${selectedReportIds.size ? '' : 'disabled'}>Delete selected (${selectedReportIds.size})</button>` : ''}
     </div>
-    ${reports.length ? `<div class="card"><p class="report-history-note">Select reports to remove them from this history. Downloaded Word files are not deleted.</p>
+    ${reports.length ? `<div class="card"><p class="report-history-note">Only reports from the last 24 hours are kept here. Downloaded Word files are not deleted.</p>
       <label class="report-select-all"><input id="selectAllReports" type="checkbox" ${selectedReportIds.size === reports.length ? 'checked' : ''}> Select all reports</label>
       ${reports.map(r => `<div class="list-item report-item">
       <input class="report-check" type="checkbox" data-report-select="${esc(r.id)}" aria-label="Select report ${esc(r.facility || 'Untitled survey')}" ${selectedReportIds.has(r.id) ? 'checked' : ''}>
       <div class="grow">
       <div class="t">${esc(r.facility || 'Untitled survey')}</div>
       <div class="s">Generated ${esc(new Date(r.generated_at).toLocaleString())}${r.report_number ? ` · Report ${esc(r.report_number)}` : ''}</div>
-      </div></div>`).join('')}</div>` : '<div class="empty">No reports generated yet.</div>'}
+      </div></div>`).join('')}</div>` : '<div class="empty">No reports generated in the last 24 hours.</div>'}
     <h2>Drafts</h2>
     ${list.length ? `<div class="card">${list.map(s => `<div class="list-item"><div class="grow" data-act="open" data-id="${s.id}" style="cursor:pointer">
       <div class="t">${esc(s.facility.name || 'Untitled survey')}</div>

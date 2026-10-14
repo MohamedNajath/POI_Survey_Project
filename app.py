@@ -1,7 +1,7 @@
 """POI survey web app – run:  python app.py   (opens http://localhost:5000)"""
 import base64, hashlib, io, os, re, secrets, shutil, socket, sqlite3, subprocess, tempfile, threading, webbrowser
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from flask import Flask, request, send_file, send_from_directory, jsonify
 from generate_report import generate, load_reference
 from poi_rules import calc as poi_calc, calc_height
@@ -52,6 +52,13 @@ def init_database():
             conn.execute('ALTER TABLE reports_unscoped RENAME TO reports')
 
 init_database()
+
+def report_history_cutoff():
+    return (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
+def prune_report_history(conn):
+    conn.execute('DELETE FROM reports WHERE julianday(generated_at) < julianday(?)',
+                 (report_history_cutoff(),))
 
 def data_url_to_file(url, path):
     head, b64 = url.split(',', 1)
@@ -152,6 +159,7 @@ def caps(): return jsonify(preview=bool(SOFFICE))
 @app.get('/api/reports')
 def list_reports():
     with database() as conn:
+        prune_report_history(conn)
         rows = conn.execute("""SELECT id, generated_at, facility, report_number, filename
                                FROM reports ORDER BY generated_at DESC""").fetchall()
     return jsonify(reports=[dict(row) for row in rows])
@@ -165,6 +173,7 @@ def import_legacy_reports():
     imported_at = datetime.now(timezone.utc)
     inserted = 0
     with database() as conn:
+        prune_report_history(conn)
         for index, report in enumerate(reports):
             if not isinstance(report, dict):
                 continue
@@ -181,6 +190,7 @@ def import_legacy_reports():
                  str(report.get('facility') or 'Untitled survey')[:200],
                  str(report.get('reportNumber') or '')[:100]))
             inserted += cursor.rowcount
+        prune_report_history(conn)
     return jsonify(ok=True, imported=inserted)
 
 @app.post('/api/reports/delete')
@@ -209,6 +219,7 @@ def report():
         facility = str((survey.get('facility') or {}).get('name', '')).strip()
         report_info = survey.get('report') or {}
         with database() as conn:
+            prune_report_history(conn)
             conn.execute("INSERT INTO reports (id, generated_at, facility, report_number, filename) VALUES (?, ?, ?, ?, ?)",
                          (secrets.token_urlsafe(18), datetime.now(timezone.utc).isoformat(), facility,
                           str(report_info.get('number', '')), name + '.docx'))

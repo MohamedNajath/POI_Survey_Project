@@ -11,7 +11,7 @@ Access and data
 - Do not deploy this version to a public or untrusted network without protecting it with access
   controls at the hosting platform or behind a trusted private network.
 - Drafts and photos are saved in the browser on the device being used. Generated-report history is
-  shared by everyone and stored in the server database.
+  shared by everyone and only kept for the most recent 24 hours.
 - The database defaults to ~/.poi-survey/users.sqlite3. Set POI_DB_PATH to a writable persistent
   location when deploying (for example, /var/data/poi-survey.sqlite3 on a Render persistent disk).
   The previous POI_AUTH_DB variable is still supported for existing deployments.
