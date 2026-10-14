@@ -18,6 +18,8 @@ What's new in this version
   camera/vendor/install-type lists) as JSON. It's checked for overlaps, gaps and missing cells before
   saving, and reports use whatever table is saved at the time of generation.
   Optional: set the environment variable ADMIN_PIN before starting the app to require a PIN there.
+- Generated reports appear in the home-page history. Select one or more entries and choose
+  "Delete selected" to remove them from the history; downloaded Word files are not deleted.
 
 Notes
 - Drafts and photos are saved in the browser on the device you use (not on the server).

@@ -33,10 +33,16 @@ const idb = {
     if (!Array.isArray(reports)) throw new Error('Saved report history is not a list.');
     return reports;
   },
+  removeReports(ids) {
+    const selected = new Set(ids);
+    const reports = this.allReports().filter(report => !selected.has(report.id));
+    localStorage.setItem('poi-survey-reports', JSON.stringify(reports));
+  },
 };
 
 /* ============ state ============ */
 let CAT = {}, CAPS = {}, S = null, view = 'home', step = 0, saveTimer = null;
+const selectedReportIds = new Set();
 const STEPS = ['Site', 'Cameras', 'Setup', 'Review'];
 
 const newCamera = () => ({ id: uid(), location_name: '', distance_m: '', target_area_m: '', height_m: '',
@@ -116,12 +122,18 @@ async function renderHome() {
   catch (e) { reportHistoryError = 'Report history could not be loaded from this browser.'; }
   list.sort((a, b) => b.updated - a.updated);
   reports.sort((a, b) => b.generatedAt - a.generatedAt);
+  const reportIds = new Set(reports.map(r => r.id));
+  selectedReportIds.forEach(id => { if (!reportIds.has(id)) selectedReportIds.delete(id); });
   $('#app').innerHTML = `<div class="top"><h1>POI surveys</h1></div><main>
     <button class="btn primary" style="width:100%" data-act="new">MOI New Survey</button>
     <button class="btn" style="width:100%;margin-top:8px" data-act="newNoLetterhead">Generate report without letterhead</button>
     ${reportHistoryError ? `<div class="card issues" role="alert">${reportHistoryError}</div>` : ''}
-    <h2>Generated reports · ${reports.length}</h2>
-    ${reports.length ? `<div class="card">${reports.map(r => `<div class="list-item"><div class="grow">
+    <div class="spread"><h2>Generated reports · ${reports.length}</h2>
+      ${reports.length ? `<button class="btn small danger" id="deleteReports" data-act="deleteReports" ${selectedReportIds.size ? '' : 'disabled'}>Delete selected (${selectedReportIds.size})</button>` : ''}
+    </div>
+    ${reports.length ? `<div class="card"><p class="report-history-note">Select reports to remove them from this history. Downloaded Word files are not deleted.</p>${reports.map(r => `<div class="list-item report-item">
+      <input class="report-check" type="checkbox" data-report-select="${esc(r.id)}" aria-label="Select report ${esc(r.facility || 'Untitled survey')}" ${selectedReportIds.has(r.id) ? 'checked' : ''}>
+      <div class="grow">
       <div class="t">${esc(r.facility || 'Untitled survey')}</div>
       <div class="s">Generated ${esc(new Date(r.generatedAt).toLocaleString())}${r.reportNumber ? ` · Report ${esc(r.reportNumber)}` : ''}</div>
       </div></div>`).join('')}</div>` : '<div class="empty">No reports generated yet.</div>'}
@@ -604,6 +616,16 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', async e => {
   const t = e.target;
+  if (t.matches('[data-report-select]')) {
+    if (t.checked) selectedReportIds.add(t.dataset.reportSelect);
+    else selectedReportIds.delete(t.dataset.reportSelect);
+    const button = $('#deleteReports');
+    if (button) {
+      button.disabled = selectedReportIds.size === 0;
+      button.textContent = `Delete selected (${selectedReportIds.size})`;
+    }
+    return;
+  }
   if (t.dataset?.bind && t.tagName === 'SELECT') { set(S, t.dataset.bind, t.value); scheduleSave(); refreshAuto(t.dataset.bind); refreshInstallationType(t.dataset.bind); return; }
   if (t.dataset?.photo && t.files?.[0]) { const f = t.files[0], target = t.dataset.photo; t.value = ''; try { await addPhoto(target, f); } catch (err) { alert(err.message); } }
 });
@@ -620,6 +642,15 @@ document.addEventListener('click', async e => {
     view = 'survey'; step = 0; render();
   }
   else if (a === 'delete') { if (confirm('Delete this draft and its photos?')) { await idb.del(el.dataset.id); render(); } }
+  else if (a === 'deleteReports') {
+    const ids = [...selectedReportIds];
+    if (!ids.length) return;
+    if (confirm(`Remove ${ids.length} selected report${ids.length === 1 ? '' : 's'} from the generated report history? Downloaded Word files will not be deleted.`)) {
+      idb.removeReports(ids);
+      selectedReportIds.clear();
+      await renderHome();
+    }
+  }
   else if (a === 'home') { closeOverlay(); clearTimeout(saveTimer); if (S) { S.updated = Date.now(); await idb.put(S); } S = null; view = 'home'; render(); }
   else if (a === 'step') { step = +el.dataset.n; closeOverlay(); render(); window.scrollTo(0, 0); }
   else if (a === 'setType') { S.facility.type = el.dataset.v; scheduleSave(); render(); }
