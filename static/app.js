@@ -21,28 +21,13 @@ const idb = {
   put(s) { return new Promise((res, rej) => { const q = this.tx('readwrite').put(s); q.onsuccess = res; q.onerror = () => rej(q.error); }); },
   all() { return new Promise((res, rej) => { const q = this.tx('readonly').getAll(); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
   del(id) { return new Promise((res, rej) => { const q = this.tx('readwrite').delete(id); q.onsuccess = res; q.onerror = () => rej(q.error); }); },
-  putReport(report) {
-    const reports = this.allReports();
-    reports.push(report);
-    localStorage.setItem('poi-survey-reports', JSON.stringify(reports));
-  },
-  allReports() {
-    const saved = localStorage.getItem('poi-survey-reports');
-    if (!saved) return [];
-    const reports = JSON.parse(saved);
-    if (!Array.isArray(reports)) throw new Error('Saved report history is not a list.');
-    return reports;
-  },
-  removeReports(ids) {
-    const selected = new Set(ids);
-    const reports = this.allReports().filter(report => !selected.has(report.id));
-    localStorage.setItem('poi-survey-reports', JSON.stringify(reports));
-  },
 };
 
 /* ============ state ============ */
 let CAT = {}, CAPS = {}, S = null, view = 'home', step = 0, saveTimer = null;
 const selectedReportIds = new Set();
+let idbReady = false;
+let legacyHistoryWarning = '';
 const STEPS = ['Site', 'Cameras', 'Setup', 'Review'];
 
 const newCamera = () => ({ id: uid(), location_name: '', distance_m: '', target_area_m: '', height_m: '',
@@ -52,7 +37,10 @@ const newCamera = () => ({ id: uid(), location_name: '', distance_m: '', target_
    and recomputed again on the server from the same table when the report is generated. */
 const poiOptions = c => POI.heightOptions(CAT, c.distance_m);
 const poiResult = c => POI.calcHeight(CAT, c.distance_m, c.height_m);
-const heightSelect = (c, i) => { const options = poiOptions(c); return `<label class="f"><span>Height (m)</span><select data-bind="cameras.${i}.height_m" id="height-${i}" ${options.ok ? '' : 'disabled'}>${options.ok ? options.heights.map(h => `<option value="${h}" ${String(h) === String(c.height_m) ? 'selected' : ''}>${h}</option>`).join('') : '<option>Enter distance first</option>'}</select></label>`; };
+const heightSelect = (c, i) => { const options = poiOptions(c); return `<div class="f"><label for="height-${i}">Height (m)</label><div class="height-control">
+  <select data-bind="cameras.${i}.height_m" id="height-${i}" ${options.ok ? '' : 'disabled'}>${options.ok ? options.heights.map(h => `<option value="${h}" ${String(h) === String(c.height_m) ? 'selected' : ''}>${h}</option>`).join('') : '<option>Enter distance first</option>'}</select>
+  <button class="btn small height-reference-button" type="button" data-act="showHeightReference" aria-label="View height reference image" title="View height reference image" aria-haspopup="dialog">▦</button>
+  </div></div>`; };
 const newSurvey = () => ({ id: uid(), created: Date.now(), updated: Date.now(), include_letterhead: true, report: { date: today(), revision: '0', number: '' },
   facility: { name: '', location: '', category: (CAT.categories || ['Other'])[0], type: 'as_build' },
   client: { name: '', mobile: '', designation: '', email: '' },
@@ -113,15 +101,57 @@ const installationTypeSelect = (c, i) => {
     </select><small class="field-error" id="install-type-error-${i}">Please select an installation type.</small></label>`;
 };
 
-function render() { view === 'home' ? renderHome() : renderSurvey(); }
+function render() {
+  view === 'home' ? renderHome() : renderSurvey();
+}
+
+async function startApp() {
+  selectedReportIds.clear();
+  try {
+    if (!idbReady) { await idb.open(); idbReady = true; }
+    await migrateLegacyReportHistory();
+    [CAT, CAPS] = await Promise.all([
+      fetch('/api/catalog').then(r => r.json()),
+      fetch('/api/capabilities').then(r => r.json()).catch(() => ({}))
+    ]);
+    view = 'home';
+    await renderHome();
+  } catch (e) {
+    $('#app').innerHTML = `<main><p class="card issues" role="alert">${esc(e.message || 'Could not load the survey application.')}</p></main>`;
+  }
+}
+
+async function migrateLegacyReportHistory() {
+  let saved;
+  try { saved = localStorage.getItem('poi-survey-reports'); }
+  catch (e) { legacyHistoryWarning = 'Previous report history could not be read from this browser.'; return; }
+  if (!saved) return;
+  try {
+    const reports = JSON.parse(saved);
+    if (!Array.isArray(reports)) throw new Error('Saved report history is not a list.');
+    const response = await fetch('/api/reports/import', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reports })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Previous report history could not be imported.');
+    localStorage.removeItem('poi-survey-reports');
+    legacyHistoryWarning = '';
+  } catch (e) {
+    legacyHistoryWarning = e.message || 'Previous report history could not be imported.';
+  }
+}
 
 async function renderHome() {
-  const list = await idb.all();
-  let reports = [], reportHistoryError = '';
-  try { reports = idb.allReports(); }
-  catch (e) { reportHistoryError = 'Report history could not be loaded from this browser.'; }
+  const localDrafts = await idb.all();
+  const list = localDrafts;
+  let reports = [], reportHistoryError = legacyHistoryWarning;
+  try {
+    const response = await fetch('/api/reports');
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || 'Report history could not be loaded.');
+    reports = body.reports;
+  } catch (e) { reportHistoryError = e.message || 'Report history could not be loaded.'; }
   list.sort((a, b) => b.updated - a.updated);
-  reports.sort((a, b) => b.generatedAt - a.generatedAt);
   const reportIds = new Set(reports.map(r => r.id));
   selectedReportIds.forEach(id => { if (!reportIds.has(id)) selectedReportIds.delete(id); });
   $('#app').innerHTML = `<div class="top"><h1>POI surveys</h1></div><main>
@@ -131,11 +161,13 @@ async function renderHome() {
     <div class="spread"><h2>Generated reports · ${reports.length}</h2>
       ${reports.length ? `<button class="btn small danger" id="deleteReports" data-act="deleteReports" ${selectedReportIds.size ? '' : 'disabled'}>Delete selected (${selectedReportIds.size})</button>` : ''}
     </div>
-    ${reports.length ? `<div class="card"><p class="report-history-note">Select reports to remove them from this history. Downloaded Word files are not deleted.</p>${reports.map(r => `<div class="list-item report-item">
+    ${reports.length ? `<div class="card"><p class="report-history-note">Select reports to remove them from this history. Downloaded Word files are not deleted.</p>
+      <label class="report-select-all"><input id="selectAllReports" type="checkbox" ${selectedReportIds.size === reports.length ? 'checked' : ''}> Select all reports</label>
+      ${reports.map(r => `<div class="list-item report-item">
       <input class="report-check" type="checkbox" data-report-select="${esc(r.id)}" aria-label="Select report ${esc(r.facility || 'Untitled survey')}" ${selectedReportIds.has(r.id) ? 'checked' : ''}>
       <div class="grow">
       <div class="t">${esc(r.facility || 'Untitled survey')}</div>
-      <div class="s">Generated ${esc(new Date(r.generatedAt).toLocaleString())}${r.reportNumber ? ` · Report ${esc(r.reportNumber)}` : ''}</div>
+      <div class="s">Generated ${esc(new Date(r.generated_at).toLocaleString())}${r.report_number ? ` · Report ${esc(r.report_number)}` : ''}</div>
       </div></div>`).join('')}</div>` : '<div class="empty">No reports generated yet.</div>'}
     <h2>Drafts</h2>
     ${list.length ? `<div class="card">${list.map(s => `<div class="list-item"><div class="grow" data-act="open" data-id="${s.id}" style="cursor:pointer">
@@ -260,6 +292,15 @@ function reviewStep() {
 /* ============ overlay (progress / result) ============ */
 function overlay(html) { closeOverlay(); const o = document.createElement('div'); o.className = 'overlay'; o.id = 'ov'; o.innerHTML = `<div class="card">${html}</div>`; document.body.appendChild(o); }
 function closeOverlay() { $('#ov')?.remove(); }
+function showHeightReference() {
+  overlay(`<div class="spread"><h3 id="height-reference-title">Height reference by distance</h3>
+    <button class="btn small" data-act="closeOv" aria-label="Close image">Close</button></div>
+    <img class="height-reference-image" src="height-reference.png" alt="Height reference table showing camera mounting heights by distance for 6, 7, and 8 degree viewing angles">`);
+  const dialog = $('#ov .card');
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.setAttribute('aria-labelledby', 'height-reference-title');
+}
 let lastUrl = null;
 let lastIncludeLetterhead = true;
 
@@ -277,10 +318,7 @@ async function generate(includeLetterhead = S.include_letterhead !== false) {
       <div class="row end" style="margin-top:12px"><button class="btn primary" data-act="closeOv">Back to survey</button></div>`); }
     const blob = await r.blob(); if (lastUrl) URL.revokeObjectURL(lastUrl); lastUrl = URL.createObjectURL(blob);
     const name = (r.headers.get('Content-Disposition') || '').match(/filename\*?=(?:UTF-8'')?"?([^";]+)/)?.[1] || 'POI_Survey_Report.docx';
-    let historyWarning = '';
-    try { await idb.putReport({ id: uid(), generatedAt: Date.now(), facility: S.facility.name, reportNumber: S.report.number }); }
-    catch (e) { historyWarning = '<p class="issues">The report was generated, but it could not be added to the home-page report history.</p>'; }
-    overlay(`<h3>Report generated successfully</h3><p style="margin:0 0 12px;color:var(--mute)">${esc(name)}</p>${historyWarning}
+    overlay(`<h3>Report generated successfully</h3><p style="margin:0 0 12px;color:var(--mute)">${esc(name)}</p>
       <div class="row" style="flex-direction:column;align-items:stretch">
       <a class="btn primary" href="${lastUrl}" download="${esc(decodeURIComponent(name))}">Download Word report</a>
       ${CAPS.preview ? '<button class="btn" data-act="preview">Preview report</button>' : ''}
@@ -616,9 +654,25 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', async e => {
   const t = e.target;
+  if (t.id === 'selectAllReports') {
+    const checkboxes = [...document.querySelectorAll('[data-report-select]')];
+    checkboxes.forEach(checkbox => {
+      checkbox.checked = t.checked;
+      if (t.checked) selectedReportIds.add(checkbox.dataset.reportSelect);
+      else selectedReportIds.delete(checkbox.dataset.reportSelect);
+    });
+    const button = $('#deleteReports');
+    if (button) {
+      button.disabled = selectedReportIds.size === 0;
+      button.textContent = `Delete selected (${selectedReportIds.size})`;
+    }
+    return;
+  }
   if (t.matches('[data-report-select]')) {
     if (t.checked) selectedReportIds.add(t.dataset.reportSelect);
     else selectedReportIds.delete(t.dataset.reportSelect);
+    const selectAll = $('#selectAllReports');
+    if (selectAll) selectAll.checked = selectedReportIds.size === document.querySelectorAll('[data-report-select]').length;
     const button = $('#deleteReports');
     if (button) {
       button.disabled = selectedReportIds.size === 0;
@@ -631,14 +685,16 @@ document.addEventListener('change', async e => {
 });
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-act]'); if (!el) return; const a = el.dataset.act, i = +el.dataset.i;
-  if (a === 'new' || a === 'newNoLetterhead') {
+  if (a === 'showHeightReference') showHeightReference();
+  else if (a === 'new' || a === 'newNoLetterhead') {
     S = newSurvey();
     if (a === 'newNoLetterhead') S.include_letterhead = false;
     await idb.put(S); view = 'survey'; step = 0; render();
   }
   else if (a === 'open') {
-    S = prepareDraft((await idb.all()).find(s => s.id === el.dataset.id));
-    if (!S) { renderHome(); return; }
+    const draft = (await idb.all()).find(s => s.id === el.dataset.id);
+    if (!draft) { await renderHome(); return; }
+    S = prepareDraft(draft);
     view = 'survey'; step = 0; render();
   }
   else if (a === 'delete') { if (confirm('Delete this draft and its photos?')) { await idb.del(el.dataset.id); render(); } }
@@ -646,9 +702,12 @@ document.addEventListener('click', async e => {
     const ids = [...selectedReportIds];
     if (!ids.length) return;
     if (confirm(`Remove ${ids.length} selected report${ids.length === 1 ? '' : 's'} from the generated report history? Downloaded Word files will not be deleted.`)) {
-      idb.removeReports(ids);
-      selectedReportIds.clear();
-      await renderHome();
+      const response = await fetch('/api/reports/delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids })
+      });
+      const body = await response.json();
+      if (!response.ok) return alert(body.error || 'Could not delete selected reports.');
+      selectedReportIds.clear(); await renderHome();
     }
   }
   else if (a === 'home') { closeOverlay(); clearTimeout(saveTimer); if (S) { S.updated = Date.now(); await idb.put(S); } S = null; view = 'home'; render(); }
@@ -673,52 +732,6 @@ document.addEventListener('click', async e => {
 });
 window.addEventListener('beforeunload', () => { if (S) idb.put(S); });
 
-/* ============ admin: edit the POI reference table (heights, lens ranges, models) ============ */
-let ADM = null, admPin = '';
-async function api(path, opts) { const h = { 'Content-Type': 'application/json' }; if (admPin) h['X-Admin-Pin'] = admPin;
-  return fetch(path, { ...opts, headers: h }).then(async r => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) })); }
-async function openAdmin() {
-  const need = (await api('/api/admin/needs-pin')).body.needs_pin;
-  if (need) { const p = prompt('Admin PIN'); if (p === null) return; admPin = p; }
-  const r = await api('/api/reference'); if (!r.ok) return alert('Could not load the reference table.');
-  ADM = r.body; view = 'admin'; renderAdmin();
-}
-function renderAdmin(msg) {
-  $('#app').innerHTML = `<div class="top"><button data-act="closeAdmin" aria-label="Back">‹</button><h1>POI reference table</h1></div>
-  <main>
-  <p style="color:var(--mute);font-size:.88rem">This table drives every survey's automatic height and lens calculation. Changes apply to reports generated after saving; surveys already generated keep the numbers they were generated with.</p>
-  ${msg ? `<div class="card" style="border-color:${msg.bad ? 'var(--err)' : 'var(--olive)'}"><b style="color:${msg.bad ? 'var(--err)' : 'var(--olive)'}">${msg.bad ? 'Not saved' : 'Saved'}</b>
-    ${msg.list?.length ? `<ul class="issues" style="color:${msg.bad ? 'var(--err)' : '#7a6f1f'}">${msg.list.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>` : ''}
-  <div class="card"><h3>Raw configuration (JSON)</h3>
-    <textarea id="ref-json" style="width:100%;min-height:46vh;font-family:ui-monospace,Consolas,monospace;font-size:.82rem;border:1px solid #bdbbbb;border-radius:8px;padding:10px">${esc(JSON.stringify(ADM, null, 1))}</textarea>
-    <p style="color:var(--mute);font-size:.82rem">Keys: <code>height_table</code> (one row per distance, one value per angle in <code>angles</code>), <code>lens_ranges</code> (non-overlapping min/max → lens), <code>rules.fractional_distance</code> (ceil / floor / nearest), plus the model, install-type, environment and vendor lists used in the app's dropdowns.</p>
-    <div class="row"><button class="btn primary" data-act="saveRef">Save</button><button class="btn danger" data-act="resetRef">Reset to shipped default</button></div>
-  </div></main>`;
-}
-async function saveRef() {
-  let parsed; try { parsed = JSON.parse($('#ref-json').value); } catch (e) { return renderAdmin({ bad: true, list: ['Not valid JSON: ' + e.message] }); }
-  const r = await api('/api/reference', { method: 'POST', body: JSON.stringify(parsed) });
-  if (r.status === 401) return renderAdmin({ bad: true, list: ['Wrong admin PIN.'] });
-  if (!r.ok) return renderAdmin({ bad: true, list: r.body.errors || ['Could not save.'] });
-  ADM = parsed; renderAdmin({ bad: false, list: r.body.warnings || [] });
-  CAT = await fetch('/api/catalog').then(x => x.json());
-}
-document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-act]'); if (!el) return; const a = el.dataset.act;
-  if (a === 'openAdmin') openAdmin();
-  else if (a === 'closeAdmin') { view = 'home'; render(); }
-  else if (a === 'saveRef') saveRef();
-  else if (a === 'resetRef') { if (confirm('Discard custom changes and restore the shipped POI table?')) { const r = await api('/api/reference/reset', { method: 'POST' });
-      if (r.status === 401) return renderAdmin({ bad: true, list: ['Wrong admin PIN.'] });
-      ADM = (await api('/api/reference')).body; CAT = await fetch('/api/catalog').then(x => x.json()); renderAdmin({ bad: false, list: ['Restored the shipped default table.'] }); } }
-});
-
 (async function init() {
-  try {
-    await idb.open();
-    [CAT, CAPS] = await Promise.all([fetch('/api/catalog').then(r => r.json()), fetch('/api/capabilities').then(r => r.json()).catch(() => ({}))]);
-    render();
-  } catch (e) {
-    $('#app').innerHTML = `<main><div class="card"><h2>POI surveys could not start</h2><p>${esc(e.message || 'Check that browser storage is available, then reload the page.')}</p><button class="btn primary" onclick="location.reload()">Reload application</button></div></main>`;
-  }
+  await startApp();
 })();

@@ -5,26 +5,40 @@ POI survey app
 3. Your browser opens at http://localhost:5000
 4. On a phone (same Wi-Fi as the computer): open the "On your phone" address printed in the window.
 
+Access and data
+- Login and user accounts are disabled. Anyone who can open the app can create surveys, view and
+  delete the shared generated-report history, and use the report-generation API.
+- Do not deploy this version to a public or untrusted network without protecting it with access
+  controls at the hosting platform or behind a trusted private network.
+- Drafts and photos are saved in the browser on the device being used. Generated-report history is
+  shared by everyone and stored in the server database.
+- The database defaults to ~/.poi-survey/users.sqlite3. Set POI_DB_PATH to a writable persistent
+  location when deploying (for example, /var/data/poi-survey.sqlite3 on a Render persistent disk).
+  The previous POI_AUTH_DB variable is still supported for existing deployments.
+- The built-in Flask server is for local/small-network use, not public deployment.
+
 What's new in this version
 - Height and Lens Model are no longer typed in. Enter Distance and pick a Viewing angle (6/7/8 deg);
   the app looks both up from the POI Camera Installation Table and shows them as read-only "AUTO" values.
+- Select the grid button beside Height (m) in a survey to view the height reference image; close it
+  to return to the survey.
 - The POI Camera Installation Table itself is now a page in the generated Word report
   ("06: POI Camera Installation Table (Reference)"), colour-coded the same way as the source table.
 - A distance outside the table (e.g. 333 m) is rejected with a clear message – the app never guesses
   a height or lens for it, on screen or in the report.
 - Fractional distances use the lower whole-metre row in the shipped height schedule (for example,
   6.8 m uses the 6 m row, which includes a 2.2 m height).
-- "POI reference table (admin)" on the home screen lets you edit the table (heights, lens ranges,
-  camera/vendor/install-type lists) as JSON. It's checked for overlaps, gaps and missing cells before
-  saving, and reports use whatever table is saved at the time of generation.
-  Optional: set the environment variable ADMIN_PIN before starting the app to require a PIN there.
-- Generated reports appear in the home-page history. Select one or more entries and choose
+- The POI reference table remains part of survey calculations and reports. To customize it, edit
+  reference.json in the project directory; if it is absent, the shipped reference.default.json is used.
+- Generated reports appear in the home-page history. Select individual reports or use "Select all",
+  then choose
   "Delete selected" to remove them from the history; downloaded Word files are not deleted.
 
 Notes
-- Drafts and photos are saved in the browser on the device you use (not on the server).
+- Drafts and photos are saved in the browser on the device you use (not on the server); report
+  history is stored in the server's local database.
 - Word preview appears only if LibreOffice is installed on the computer running the app.
-- reference.default.json is the table as shipped (transcribed from your POI table image). Saving in the
-  admin page writes reference.json alongside it; delete reference.json (or use "Reset to shipped
-  default" in the app) to go back to the shipped table.
+- reference.default.json is the table as shipped (transcribed from your POI table image). To use a
+  custom table, add or edit reference.json alongside it; remove reference.json to restore the shipped
+  default.
 - Edit template.docx in Word to change fixed report text. Keep the {{TOKENS}} intact.

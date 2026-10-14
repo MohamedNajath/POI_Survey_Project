@@ -1,16 +1,57 @@
 """POI survey web app – run:  python app.py   (opens http://localhost:5000)"""
-import base64, io, json, os, re, shutil, socket, subprocess, tempfile, threading, webbrowser
+import base64, hashlib, io, os, re, secrets, shutil, socket, sqlite3, subprocess, tempfile, threading, webbrowser
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from flask import Flask, request, send_file, send_from_directory, jsonify
 from generate_report import generate, load_reference
-from poi_rules import calc as poi_calc, calc_height, validate_reference
+from poi_rules import calc as poi_calc, calc_height
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, 'template.docx')
-REF_PATH = os.path.join(HERE, 'reference.json')
-REF_DEFAULT = os.path.join(HERE, 'reference.default.json')
 app = Flask(__name__, static_folder=os.path.join(HERE, 'static'), static_url_path='')
 app.config['MAX_CONTENT_LENGTH'] = 400 * 1024 * 1024
 SOFFICE = shutil.which('soffice') or shutil.which('libreoffice')
+DB_PATH = os.path.abspath(os.path.expanduser(os.environ.get(
+    'POI_DB_PATH', os.environ.get('POI_AUTH_DB', os.path.join('~', '.poi-survey', 'users.sqlite3')))))
+
+@contextmanager
+def database():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.execute('PRAGMA foreign_keys = ON')
+    conn.row_factory = sqlite3.Row
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+def init_database():
+    with database() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        conn.execute("""CREATE TABLE IF NOT EXISTS reports (
+            id TEXT PRIMARY KEY,
+            generated_at TEXT NOT NULL,
+            facility TEXT NOT NULL,
+            report_number TEXT NOT NULL,
+            filename TEXT NOT NULL
+        )""")
+        columns = {row['name'] for row in conn.execute('PRAGMA table_info(reports)')}
+        if 'created_by' in columns:
+            conn.execute("""CREATE TABLE reports_unscoped (
+                id TEXT PRIMARY KEY,
+                generated_at TEXT NOT NULL,
+                facility TEXT NOT NULL,
+                report_number TEXT NOT NULL,
+                filename TEXT NOT NULL
+            )""")
+            conn.execute("""INSERT INTO reports_unscoped
+                (id, generated_at, facility, report_number, filename)
+                SELECT id, generated_at, facility, report_number, filename FROM reports""")
+            conn.execute('DROP TABLE reports')
+            conn.execute('ALTER TABLE reports_unscoped RENAME TO reports')
+
+init_database()
 
 def data_url_to_file(url, path):
     head, b64 = url.split(',', 1)
@@ -95,36 +136,10 @@ def make_docx(survey, tmp, include_letterhead=True):
 def index(): return send_from_directory(app.static_folder, 'index.html')
 
 def current_reference():
-    return load_reference(HERE)  # reference.json if an admin has saved one, else the shipped default
+    return load_reference(HERE)  # Use the local override when present, otherwise the shipped default.
 
 @app.get('/api/catalog')
 def catalog(): return jsonify(current_reference())
-
-ADMIN_PIN = os.environ.get('ADMIN_PIN', '').strip()
-
-def admin_ok():
-    return not ADMIN_PIN or request.headers.get('X-Admin-Pin', '') == ADMIN_PIN
-
-@app.get('/api/reference')
-def get_reference(): return jsonify(current_reference())
-
-@app.get('/api/admin/needs-pin')
-def needs_pin(): return jsonify(needs_pin=bool(ADMIN_PIN))
-
-@app.post('/api/reference')
-def save_reference():
-    if not admin_ok(): return jsonify(errors=['Wrong admin PIN.']), 401
-    ref = request.get_json(force=True); errs, warnings = validate_reference(ref)
-    if errs: return jsonify(errors=errs, warnings=warnings), 400
-    ref['updated'] = __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()
-    json.dump(ref, open(REF_PATH, 'w', encoding='utf-8'), indent=1, ensure_ascii=False)
-    return jsonify(ok=True, warnings=warnings)
-
-@app.post('/api/reference/reset')
-def reset_reference():
-    if not admin_ok(): return jsonify(errors=['Wrong admin PIN.']), 401
-    if os.path.exists(REF_PATH): os.remove(REF_PATH)
-    return jsonify(ok=True)
 
 @app.post('/api/calc')
 def api_calc():
@@ -134,6 +149,54 @@ def api_calc():
 @app.get('/api/capabilities')
 def caps(): return jsonify(preview=bool(SOFFICE))
 
+@app.get('/api/reports')
+def list_reports():
+    with database() as conn:
+        rows = conn.execute("""SELECT id, generated_at, facility, report_number, filename
+                               FROM reports ORDER BY generated_at DESC""").fetchall()
+    return jsonify(reports=[dict(row) for row in rows])
+
+@app.post('/api/reports/import')
+def import_legacy_reports():
+    body = request.get_json(silent=True) or {}
+    reports = body.get('reports')
+    if not isinstance(reports, list) or len(reports) > 1000:
+        return jsonify(error='Report history must be a list of no more than 1000 entries.'), 400
+    imported_at = datetime.now(timezone.utc)
+    inserted = 0
+    with database() as conn:
+        for index, report in enumerate(reports):
+            if not isinstance(report, dict):
+                continue
+            try:
+                generated_at = datetime.fromtimestamp(int(report.get('generatedAt')) / 1000, timezone.utc)
+            except (TypeError, ValueError, OSError, OverflowError):
+                generated_at = imported_at
+            legacy_id = str(report.get('id') or index)
+            report_id = 'legacy-' + hashlib.sha256(legacy_id.encode('utf-8')).hexdigest()
+            cursor = conn.execute("""INSERT OR IGNORE INTO reports
+                (id, generated_at, facility, report_number, filename)
+                VALUES (?, ?, ?, ?, '')""",
+                (report_id, generated_at.isoformat(),
+                 str(report.get('facility') or 'Untitled survey')[:200],
+                 str(report.get('reportNumber') or '')[:100]))
+            inserted += cursor.rowcount
+    return jsonify(ok=True, imported=inserted)
+
+@app.post('/api/reports/delete')
+def delete_reports():
+    body = request.get_json(silent=True) or {}
+    ids = body.get('ids')
+    if not isinstance(ids, list) or not ids or any(not isinstance(item, str) for item in ids):
+        return jsonify(error='Select at least one report to delete.'), 400
+    ids = list(set(ids))
+    if len(ids) > 500:
+        return jsonify(error='Select no more than 500 reports at a time.'), 400
+    with database() as conn:
+        placeholders = ','.join('?' for _ in ids)
+        cursor = conn.execute(f"DELETE FROM reports WHERE id IN ({placeholders})", ids)
+    return jsonify(ok=True, deleted=cursor.rowcount)
+
 @app.post('/api/report')
 def report():
     tmp = tempfile.mkdtemp()
@@ -142,6 +205,13 @@ def report():
         res, errors = make_docx(request.get_json(force=True), tmp, include_letterhead)
         if errors: return jsonify(errors=errors), 400
         out, name = res; buf = io.BytesIO(open(out, 'rb').read())
+        survey = request.get_json(silent=True) or {}
+        facility = str((survey.get('facility') or {}).get('name', '')).strip()
+        report_info = survey.get('report') or {}
+        with database() as conn:
+            conn.execute("INSERT INTO reports (id, generated_at, facility, report_number, filename) VALUES (?, ?, ?, ?, ?)",
+                         (secrets.token_urlsafe(18), datetime.now(timezone.utc).isoformat(), facility,
+                          str(report_info.get('number', '')), name + '.docx'))
     except Exception as e:
         app.logger.exception('report failed'); return jsonify(errors=['Report generation failed: %s' % e]), 500
     finally: shutil.rmtree(tmp, ignore_errors=True)
