@@ -169,7 +169,7 @@ async function renderHome() {
   list.sort((a, b) => b.updated - a.updated);
   const reportIds = new Set(reports.map(r => r.id));
   selectedReportIds.forEach(id => { if (!reportIds.has(id)) selectedReportIds.delete(id); });
-  $('#app').innerHTML = `<div class="top"><h1>POI surveys</h1></div><main>
+  $('#app').innerHTML = `<div class="top"><img class="home-logo" src="poi-logo.png" alt="KPO Dahua Qatar"></div><main>
     <button class="btn primary" style="width:100%" data-act="new">MOI New Survey</button>
     <button class="btn" style="width:100%;margin-top:8px" data-act="newNoLetterhead">Generate report without letterhead</button>
     ${reportHistoryError ? `<div class="card issues" role="alert">${reportHistoryError}</div>` : ''}
