@@ -130,11 +130,15 @@ def build(survey, tmp, ref):
     try:
         cfg = {'encoding': cfg_in['encoding'], 'resolution': cfg_in['resolution'], 'fps': int(cfg_in['fps']),
                'bitrate_kbps': int(cfg_in['bitrate_kbps']), 'wdr_day': cfg_in['wdr_day'], 'wdr_night': cfg_in['wdr_night']}
-        events_per_day = int(cfg_in.get('events_per_day', 1000))
+        raw_events_per_day = cfg_in['events_per_day']
+        if isinstance(raw_events_per_day, bool) or not re.fullmatch(r'\d+', str(raw_events_per_day).strip()):
+            raise ValueError()
+        events_per_day = int(raw_events_per_day)
         event_days = int(cfg_in.get('event_days', 90))
         extra_pct = int(cfg_in.get('extra_storage_pct', 10))
         if events_per_day <= 0 or event_days not in (30, 60, 90) or extra_pct not in (10, 20): raise ValueError()
-    except (KeyError, ValueError, TypeError): errors.append('Setup: camera settings are incomplete or contain an invalid storage period/extra percentage.')
+    except (KeyError, ValueError, TypeError):
+        errors.append('Setup: events per day per camera is required as a positive whole number, and the camera settings must contain a valid storage period and extra percentage.')
     if errors: return None, errors
     fp = survey.get('floor_plan'); fpp = None
     if fp and fp.get('flat'): fpp = os.path.join(tmp, 'floorplan.jpg'); data_url_to_file(fp['flat'], fpp)
@@ -167,7 +171,11 @@ def current_reference():
     return load_reference(HERE)  # Use the local override when present, otherwise the shipped default.
 
 @app.get('/api/catalog')
-def catalog(): return jsonify(current_reference())
+def catalog():
+    reference = current_reference()
+    categories = reference.get('categories') or []
+    reference['categories'] = list(dict.fromkeys([*categories, 'Accommodation']))
+    return jsonify(reference)
 
 @app.post('/api/calc')
 def api_calc():

@@ -42,10 +42,10 @@ const heightSelect = (c, i) => { const options = poiOptions(c); return `<div cla
   <button class="btn small height-reference-button" type="button" data-act="showHeightReference" aria-label="View height reference image" title="View height reference image" aria-haspopup="dialog">▦</button>
   </div></div>`; };
 const newSurvey = () => ({ id: uid(), created: Date.now(), updated: Date.now(), include_letterhead: true, report: { date: today(), revision: '0', number: '' },
-  facility: { name: '', location: '', category: (CAT.categories || ['Other'])[0], type: 'as_build' },
+  facility: { name: '', location: '', category: (CAT.categories || ['Other'])[0], type: 'new' },
   client: { name: '', mobile: '', designation: '', email: '' },
   contractor: { company: '', name: '', mobile: '', designation: '', email: '', certified_engineer: '', certified_technician: '' },
-  config: { encoding: 'H.264', resolution: '2560x1440p', fps: 25, bitrate_kbps: 4096, wdr_day: 'ON', wdr_night: 'OFF', events_per_day: 1000, event_days: '90', extra_storage_pct: '10' },
+  config: { encoding: 'H.264', resolution: '2560x1440p', fps: 25, bitrate_kbps: 4096, wdr_day: 'ON', wdr_night: 'OFF', events_per_day: '', event_days: '90', extra_storage_pct: '10' },
   vendor: 'DAHUA', author: '', cameras: [newCamera()], nvr: clone(CAT.nvr_defaults || []), floor_plan: null });
 
 function scheduleSave() {
@@ -63,10 +63,13 @@ function photoFor(c, kind, seen = new Set()) {
 }
 
 function storageEstimate() {
-  const n = totalCams(), events = Math.max(1, parseInt(S.config.events_per_day) || 1000), s = (parseInt(S.config.bitrate_kbps) || 4096) / 4096;
+  const events = Number(S.config.events_per_day);
   const eventDays = [30, 60, 90].includes(Number(S.config.event_days)) ? Number(S.config.event_days) : 90;
-  const day = 21.2 * s * events / 1024, ev = day * eventDays * n / 1024, img = (events / 1024) * eventDays * n, total = ev + img / 1024;
   const extraPct = Number(S.config.extra_storage_pct) === 20 ? 20 : 10;
+  if (!Number.isInteger(events) || events <= 0)
+    return { total: '—', eventDays, extraPct, extra: '—' };
+  const n = totalCams(), s = (parseInt(S.config.bitrate_kbps) || 4096) / 4096;
+  const day = 21.2 * s * events / 1024, ev = day * eventDays * n / 1024, img = (events / 1024) * eventDays * n, total = ev + img / 1024;
   return { total: total.toFixed(2), eventDays, extraPct, extra: (total * (1 + extraPct / 100)).toFixed(2) };
 }
 
@@ -75,6 +78,9 @@ function issues() {
   if (!f.name.trim()) out.push({ t: 'Add the facility name', s: 0 });
   if (!f.location.trim()) out.push({ t: 'Add the location', s: 0 });
   if (!S.cameras.length) out.push({ t: 'Add at least one camera', s: 1 });
+  const eventsPerDay = Number(S.config.events_per_day);
+  if (!Number.isInteger(eventsPerDay) || eventsPerDay <= 0)
+    out.push({ t: 'Enter a positive whole number for events per day per camera', s: 2 });
   S.cameras.forEach((c, i) => {
     const n = `Camera ${String(i + 1).padStart(2, '0')}`;
     if (!c.location_name.trim() || !String(c.distance_m).trim() || !String(c.target_area_m).trim())
@@ -99,6 +105,15 @@ const installationTypeSelect = (c, i) => {
       <option value="" disabled ${missing ? 'selected' : ''}>Select installation type</option>
       ${(CAT.install_types || []).map(x => `<option value="${esc(x)}" ${x === c.install_type ? 'selected' : ''}>${esc(x)}</option>`).join('')}
     </select><small class="field-error" id="install-type-error-${i}">Please select an installation type.</small></label>`;
+};
+const eventsPerDayField = () => {
+  const value = S.config.events_per_day;
+  const missing = !Number.isInteger(Number(value)) || Number(value) <= 0;
+  return `<label class="f events-per-day ${missing ? 'required-field' : ''}">
+    <span>Events per day per camera <b>*</b></span>
+    <input data-bind="config.events_per_day" id="events-per-day" type="number" inputmode="numeric" min="1" step="1" required aria-invalid="${missing}" value="${esc(value ?? '')}" autocomplete="off">
+    <small class="field-error">Enter a positive whole number.</small>
+  </label>`;
 };
 
 function render() {
@@ -182,7 +197,7 @@ async function renderHome() {
 function prepareDraft(survey) {
   if (!survey) return null;
   survey.config ??= {};
-  survey.config.events_per_day ??= 1000;
+  survey.config.events_per_day ??= '';
   survey.config.event_days ??= '90';
   survey.config.extra_storage_pct ??= '10';
   survey.cameras.forEach(c => { if (!c.height_m && c.viewing_angle != null) { const old = POI.calc(CAT, c.distance_m, c.viewing_angle); if (old.ok) c.height_m = old.height; } });
@@ -191,7 +206,7 @@ function prepareDraft(survey) {
 
 function renderSurvey() {
   const iss = issues();
-  const done = i => i === 0 ? !iss.some(x => x.s === 0) : i === 1 ? !iss.some(x => x.s === 1) : true;
+  const done = i => i === 0 ? !iss.some(x => x.s === 0) : i === 1 ? !iss.some(x => x.s === 1) : i === 2 ? !iss.some(x => x.s === 2) : true;
   const body = [siteStep, camerasStep, setupStep, reviewStep][step]();
   $('#app').innerHTML = `<div class="top"><button data-act="home" aria-label="Back to drafts">‹</button>
     <h1>${esc(S.facility.name || 'New survey')}</h1><span class="saved" id="saved">Saved</span></div>
@@ -259,7 +274,7 @@ function slot(i, kind, label, ph) {
 function setupStep() {
   return `<h2>Camera settings</h2><div class="card"><div class="grid">
     ${fld('Encoding', 'config.encoding')}${fld('Resolution', 'config.resolution')}${fld('FPS', 'config.fps', { mode: 'numeric' })}${fld('Bit rate (kbps)', 'config.bitrate_kbps', { mode: 'numeric' })}
-    ${fld('Events per day per camera', 'config.events_per_day', { type: 'number', mode: 'numeric' })}${sel('Event recording days', 'config.event_days', ['30', '60', '90'])}${sel('Storage extra (%)', 'config.extra_storage_pct', ['10', '20'])}
+    ${eventsPerDayField()}${sel('Event recording days', 'config.event_days', ['30', '60', '90'])}${sel('Storage extra (%)', 'config.extra_storage_pct', ['10', '20'])}
     ${sel('WDR – day', 'config.wdr_day', ['ON', 'OFF'])}${sel('WDR – night', 'config.wdr_night', ['ON', 'OFF'])}${fld('Camera vendor', 'vendor', { wide: true })}</div></div>
   <h2>NVR / recorder</h2>
   ${S.nvr.map((d, i) => `<div class="card"><div class="spread"><h3>Item ${i + 1}</h3><button class="btn small danger" data-act="delNvr" data-i="${i}">Remove</button></div><div class="grid">
@@ -647,8 +662,16 @@ function refreshInstallationType(bindPath) {
   select.closest('.f')?.classList.toggle('required-field', missing);
   select.setAttribute('aria-invalid', String(missing));
 }
+function refreshEventsPerDay(bindPath) {
+  if (bindPath !== 'config.events_per_day') return;
+  const input = document.getElementById('events-per-day'); if (!input) return;
+  const value = Number(input.value), missing = !Number.isInteger(value) || value <= 0;
+  input.closest('.f')?.classList.toggle('required-field', missing);
+  input.setAttribute('aria-invalid', String(missing));
+}
 document.addEventListener('input', e => {
   const b = e.target.dataset?.bind; if (!b || !S) return; set(S, b, e.target.value); scheduleSave();
+  refreshEventsPerDay(b);
   if (b.endsWith('.qty') && $('#totalCams')) $('#totalCams').textContent = totalCams();
   if (b.endsWith('.distance_m')) { refreshHeight(b); refreshAuto(b); }
 });

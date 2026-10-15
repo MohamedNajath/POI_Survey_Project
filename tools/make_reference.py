@@ -17,7 +17,7 @@ ref = {
  "install_types": ["Wall Mount", "Ceiling Mount", "Pendant"],
  "environments": ["Indoor", "Indoor Housing", "Outdoor Housing"],
  "vendors": ["DAHUA"], "default_vendor": "DAHUA",
- "categories": ["Fast-food", "Restaurant / cafe", "Supermarket", "Retail shop", "Jewellery", "Pharmacy", "Bank / exchange", "Hotel", "Office", "Warehouse", "Other"],
+ "categories": ["Fast-food", "Restaurant / cafe", "Supermarket", "Retail shop", "Jewellery", "Pharmacy", "Bank / exchange", "Hotel", "Office", "Warehouse", "Accommodation", "Other"],
  "nvr_defaults": [
    {"device_type": "IVD", "model": "DHI-IVD5148-1I-4G/WT", "description": "1U INTELLIGENT VIDEO DEVICE (HDD)", "qty": 1},
    {"device_type": "HDD", "model": "4TB SURVEILLANCE HDD", "description": "4TB SURVEILLANCE Hard Disk (Any MOI-SSD approved model)", "qty": 1}]}

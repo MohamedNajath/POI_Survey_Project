@@ -29,6 +29,10 @@ h2{font-size:1.15rem;margin:18px 4px 8px}
 .installation-type.required-field{color:var(--ruby);font-weight:600}
 .installation-type.required-field select{border:2px solid var(--ruby);background:#fff2f3;color:var(--ruby)}
 .installation-type>span b{color:var(--ruby)}
+.events-per-day.required-field{color:var(--maroon);font-weight:600}
+.events-per-day.required-field input{border:2px solid var(--maroon);background:#fff2f3;color:var(--maroon)}
+.events-per-day>span b{color:var(--maroon)}
+.events-per-day .field-error{color:var(--maroon)}
 .field-error{display:none;font-size:.78rem;font-weight:600}
 .required-field .field-error{display:block}
 .f textarea{padding:10px;min-height:80px}
