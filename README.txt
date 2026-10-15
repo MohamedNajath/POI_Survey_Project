@@ -6,12 +6,14 @@ POI survey app
 4. On a phone (same Wi-Fi as the computer): open the "On your phone" address printed in the window.
 
 Access and data
-- Login and user accounts are disabled. Anyone who can open the app can create surveys, view and
-  delete the shared generated-report history, and use the report-generation API.
+- Login and user accounts are disabled. Generated-report history is separated by browser profile;
+  anyone using the same browser profile shares that history. This is not an authentication or
+  security boundary.
 - Do not deploy this version to a public or untrusted network without protecting it with access
   controls at the hosting platform or behind a trusted private network.
-- Drafts and photos are saved in the browser on the device being used. Generated-report history is
-  shared by everyone and only kept for the most recent 24 hours.
+- Drafts and photos are saved in the browser on the device being used. A browser cookie identifies
+  its report history; clearing that cookie starts a separate history. Reports are kept for the most
+  recent 24 hours. Reports created before browser-specific history was enabled are not displayed.
 - The database defaults to ~/.poi-survey/users.sqlite3. Set POI_DB_PATH to a writable persistent
   location when deploying (for example, /var/data/poi-survey.sqlite3 on a Render persistent disk).
   The previous POI_AUTH_DB variable is still supported for existing deployments.

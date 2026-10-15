@@ -2,7 +2,7 @@
 import base64, hashlib, io, os, re, secrets, shutil, socket, sqlite3, subprocess, tempfile, threading, webbrowser
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from flask import Flask, request, send_file, send_from_directory, jsonify
+from flask import Flask, g, request, send_file, send_from_directory, jsonify
 from generate_report import generate, load_reference
 from poi_rules import calc as poi_calc, calc_height
 
@@ -34,7 +34,8 @@ def init_database():
             generated_at TEXT NOT NULL,
             facility TEXT NOT NULL,
             report_number TEXT NOT NULL,
-            filename TEXT NOT NULL
+            filename TEXT NOT NULL,
+            owner_id TEXT
         )""")
         columns = {row['name'] for row in conn.execute('PRAGMA table_info(reports)')}
         if 'created_by' in columns:
@@ -43,15 +44,35 @@ def init_database():
                 generated_at TEXT NOT NULL,
                 facility TEXT NOT NULL,
                 report_number TEXT NOT NULL,
-                filename TEXT NOT NULL
+                filename TEXT NOT NULL,
+                owner_id TEXT
             )""")
             conn.execute("""INSERT INTO reports_unscoped
-                (id, generated_at, facility, report_number, filename)
-                SELECT id, generated_at, facility, report_number, filename FROM reports""")
+                (id, generated_at, facility, report_number, filename, owner_id)
+                SELECT id, generated_at, facility, report_number, filename, NULL FROM reports""")
             conn.execute('DROP TABLE reports')
             conn.execute('ALTER TABLE reports_unscoped RENAME TO reports')
+        elif 'owner_id' not in columns:
+            conn.execute('ALTER TABLE reports ADD COLUMN owner_id TEXT')
+        conn.execute('CREATE INDEX IF NOT EXISTS reports_owner_generated ON reports(owner_id, generated_at)')
 
 init_database()
+
+REPORT_HISTORY_PATHS = {'/api/reports', '/api/reports/import', '/api/reports/delete', '/api/report'}
+
+@app.before_request
+def assign_report_owner():
+    if request.path in REPORT_HISTORY_PATHS:
+        owner_id = request.cookies.get('poi_survey_report_owner')
+        g.report_owner_id = owner_id if owner_id and re.fullmatch(r'[A-Za-z0-9_-]{32,64}', owner_id) else secrets.token_urlsafe(32)
+
+@app.after_request
+def persist_report_owner(response):
+    owner_id = getattr(g, 'report_owner_id', None)
+    if owner_id:
+        response.set_cookie('poi_survey_report_owner', owner_id, max_age=365 * 24 * 60 * 60,
+                            httponly=True, secure=request.is_secure, samesite='Lax')
+    return response
 
 def report_history_cutoff():
     return (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
@@ -161,7 +182,8 @@ def list_reports():
     with database() as conn:
         prune_report_history(conn)
         rows = conn.execute("""SELECT id, generated_at, facility, report_number, filename
-                               FROM reports ORDER BY generated_at DESC""").fetchall()
+                               FROM reports WHERE owner_id = ? ORDER BY generated_at DESC""",
+                             (g.report_owner_id,)).fetchall()
     return jsonify(reports=[dict(row) for row in rows])
 
 @app.post('/api/reports/import')
@@ -182,13 +204,13 @@ def import_legacy_reports():
             except (TypeError, ValueError, OSError, OverflowError):
                 generated_at = imported_at
             legacy_id = str(report.get('id') or index)
-            report_id = 'legacy-' + hashlib.sha256(legacy_id.encode('utf-8')).hexdigest()
+            report_id = 'legacy-' + hashlib.sha256((g.report_owner_id + ':' + legacy_id).encode('utf-8')).hexdigest()
             cursor = conn.execute("""INSERT OR IGNORE INTO reports
-                (id, generated_at, facility, report_number, filename)
-                VALUES (?, ?, ?, ?, '')""",
+                (id, generated_at, facility, report_number, filename, owner_id)
+                VALUES (?, ?, ?, ?, '', ?)""",
                 (report_id, generated_at.isoformat(),
                  str(report.get('facility') or 'Untitled survey')[:200],
-                 str(report.get('reportNumber') or '')[:100]))
+                 str(report.get('reportNumber') or '')[:100], g.report_owner_id))
             inserted += cursor.rowcount
         prune_report_history(conn)
     return jsonify(ok=True, imported=inserted)
@@ -204,7 +226,8 @@ def delete_reports():
         return jsonify(error='Select no more than 500 reports at a time.'), 400
     with database() as conn:
         placeholders = ','.join('?' for _ in ids)
-        cursor = conn.execute(f"DELETE FROM reports WHERE id IN ({placeholders})", ids)
+        cursor = conn.execute(f"DELETE FROM reports WHERE owner_id = ? AND id IN ({placeholders})",
+                              [g.report_owner_id, *ids])
     return jsonify(ok=True, deleted=cursor.rowcount)
 
 @app.post('/api/report')
@@ -220,9 +243,9 @@ def report():
         report_info = survey.get('report') or {}
         with database() as conn:
             prune_report_history(conn)
-            conn.execute("INSERT INTO reports (id, generated_at, facility, report_number, filename) VALUES (?, ?, ?, ?, ?)",
+            conn.execute("INSERT INTO reports (id, generated_at, facility, report_number, filename, owner_id) VALUES (?, ?, ?, ?, ?, ?)",
                          (secrets.token_urlsafe(18), datetime.now(timezone.utc).isoformat(), facility,
-                          str(report_info.get('number', '')), name + '.docx'))
+                          str(report_info.get('number', '')), name + '.docx', g.report_owner_id))
     except Exception as e:
         app.logger.exception('report failed'); return jsonify(errors=['Report generation failed: %s' % e]), 500
     finally: shutil.rmtree(tmp, ignore_errors=True)
